@@ -98,6 +98,17 @@ Send any of these formats:
 - `GrabBike 45k`
 - `2.5tr internet VNPT`
 
+### Vietnamese Relative Date Support
+
+The bot understands relative date expressions:
+
+- `Ăn trưa hôm qua 85k` → yesterday's date
+- `Coffee ngày mai 55k` → tomorrow's date
+- `Ăn tối hôm kia 120k` → day before yesterday
+- `Ăn trưa ngày này tháng trước 85k` → same day last month
+- `Coffee ngày này tuần trước 55k` → same weekday last week
+- `Ăn tối ngày này năm trước 120k` → same day last year
+
 ### Image/PDF
 
 Simply send a photo or PDF document containing receipt/invoice text.
@@ -152,6 +163,22 @@ pytest tests/ -v
 ```
 
 ### Docker deployment
+
+Using docker-compose (recommended - includes Ollama):
+
+```bash
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your bot token
+
+# Start the bot and Ollama
+docker-compose up -d
+
+# Initial setup: pull the model in Ollama
+docker exec -it ollama ollama pull gemma3:4b-it-qat
+```
+
+Or using docker directly:
 
 ```bash
 docker build -t finance-bot .

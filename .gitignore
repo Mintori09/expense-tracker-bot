@@ -15,10 +15,13 @@ venv
 *.log
 logs/*.log
 
-# Runtime data files (keep structure but ignore contents)
+# Docker runtime data
 data/**/*.db
 data/**/*.xlsx
 !data/finance/.gitkeep
+
+# Docker
+docker-compose.override.yml
 
 # Python
 .pytest_cache
