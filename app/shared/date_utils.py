@@ -3,10 +3,13 @@
 import calendar
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Vietnam timezone (UTC+7)
+VIETNAM_TZ = timezone(timedelta(hours=7))
 
 # Vietnamese relative date patterns and their offsets (simple day offsets)
 VIETNAMESE_DATE_PATTERNS = {
@@ -43,7 +46,7 @@ def parse_vietnamese_date(text: str) -> Optional[str]:
         >>> parse_vietnamese_date("Coffee ngày mai")
         "2025-01-17"  # if today is 2025-01-16
     """
-    today = datetime.now().date()
+    today = datetime.now(VIETNAM_TZ).date()
 
     # First check for complex patterns (month/year offsets)
     complex_result = parse_complex_vietnamese_date(text)
@@ -75,7 +78,7 @@ def parse_complex_vietnamese_date(text: str) -> Optional[str]:
     Returns:
         Date in YYYY-MM-DD format, or None if no match
     """
-    today = datetime.now()
+    today = datetime.now(VIETNAM_TZ)
 
     # Pattern: "ngày này tháng trước" - same day of last month
     match = re.search(r"\bngày này tháng trước\b", text, re.IGNORECASE)
@@ -140,7 +143,7 @@ def resolve_relative_dates(text: str) -> tuple[str, Optional[str]]:
         >>> resolve_relative_dates("Ăn trưa hôm qua 85k")
         ("Ăn trưa 2025-01-15 85k", "2025-01-15")
     """
-    today = datetime.now().date()
+    today = datetime.now(VIETNAM_TZ).date()
     modified_text = text
     resolved_date = None
 

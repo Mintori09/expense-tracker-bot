@@ -239,7 +239,8 @@ Rules:
         data = json.loads(result_text.strip())
 
         transactions = []
-        today = datetime.now().strftime("%Y-%m-%d")
+        from app.shared.date_utils import VIETNAM_TZ
+        today = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
 
         for item in data:
             try:
@@ -301,7 +302,8 @@ async def extract_transaction(
 
         # Parse date - use resolved_date or today if missing or invalid
         date = data.get("date")
-        today = datetime.now().strftime("%Y-%m-%d")
+        from app.shared.date_utils import VIETNAM_TZ
+        today = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
 
         # If we resolved a relative date from the text, use it as the default
         if not date:
@@ -310,7 +312,7 @@ async def extract_transaction(
             # Validate date is reasonable (not in the future, not too old)
             try:
                 parsed_date = datetime.strptime(date, "%Y-%m-%d")
-                today_dt = datetime.now()
+                today_dt = datetime.now(VIETNAM_TZ)
                 # If date is in future or more than 30 days ago, use resolved or today
                 if (
                     parsed_date.date() > today_dt.date()
@@ -357,7 +359,7 @@ async def extract_transaction(
 
 def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
     """Simple fallback extraction without LLM for common Vietnamese patterns."""
-    from app.shared.date_utils import parse_vietnamese_date
+    from app.shared.date_utils import VIETNAM_TZ, parse_vietnamese_date
 
     # Clean text
     text = text.strip()
@@ -365,7 +367,7 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
     # Try to parse Vietnamese relative date from the beginning of the text
     date = parse_vietnamese_date(text)
     if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
+        date = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
 
     # Find amount first
     amount = None
@@ -437,14 +439,14 @@ def extract_multiple_fallback(text: str) -> list[ExtractedTransaction]:
     Example: "30k đánh cầu sân win win, 50k đánh cầu sân lâm gia"
     Returns: [30k transaction, 50k transaction]
     """
-    from app.shared.date_utils import parse_vietnamese_date
+    from app.shared.date_utils import VIETNAM_TZ, parse_vietnamese_date
 
     transactions = []
 
     # Try to parse Vietnamese relative date from the text
     date = parse_vietnamese_date(text)
     if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
+        date = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
 
     # Find all k/tr amounts in the text
     k_matches = list(re.finditer(r"(\d+(?:[.,]\d+)?)\s*k", text, re.IGNORECASE))
