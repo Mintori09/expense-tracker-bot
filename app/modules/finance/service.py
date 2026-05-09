@@ -102,14 +102,15 @@ async def process_expense_text(
     except ExtractionError as e:
         logger.warning("LLM extraction failed: %s, trying fallback", e)
 
-        # Try to refresh USD rate if mentioned in text
+        # Try to get realtime USD rate
+        usd_rate = USD_TO_VND_RATE
         if "$" in text or "usd" in text.lower() or "dollar" in text.lower():
             try:
                 from app.modules.finance.extractor import get_usd_to_vnd_rate
-                rate = await get_usd_to_vnd_rate()
-                logger.info(f"Updated USD rate: {rate}")
+                usd_rate = await get_usd_to_vnd_rate()
+                logger.info(f"Using USD rate: {usd_rate}")
             except Exception as rate_error:
-                logger.warning(f"Failed to update USD rate: {rate_error}")
+                logger.warning(f"Failed to get USD rate: {rate_error}")
 
         # Try multiple transactions fallback first
         multiple_txs = extract_multiple_fallback(text)
@@ -143,7 +144,7 @@ async def process_expense_text(
             )
             return
 
-        fallback = extract_simple_fallback(text)
+        fallback = extract_simple_fallback(text, usd_rate)
 
         if fallback:
             fallback.user_id = user_id

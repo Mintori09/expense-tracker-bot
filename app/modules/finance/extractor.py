@@ -166,8 +166,12 @@ async def get_usd_to_vnd_rate() -> float:
     return _usd_rate_cache["rate"]
 
 
-def parse_usd_amount(text: str) -> tuple[Optional[float], Optional[str]]:
+def parse_usd_amount(text: str, rate: float = None) -> tuple[Optional[float], Optional[str]]:
     """Parse USD amount format like '$10', '10 USD', '10 dollars'.
+
+    Args:
+        text: Text to parse
+        rate: Optional USD to VND rate (uses global if not provided)
 
     Returns:
         Tuple of (amount_in_vnd, currency_code) or (None, None) if not USD
@@ -186,7 +190,7 @@ def parse_usd_amount(text: str) -> tuple[Optional[float], Optional[str]]:
         match = re.search(pattern, text_lower)
         if match:
             usd_amount = float(match.group(1).replace(",", "."))
-            vnd_amount = usd_amount * USD_TO_VND_RATE
+            vnd_amount = usd_amount * (rate or USD_TO_VND_RATE)
             return vnd_amount, "USD"
 
     return None, None
@@ -429,7 +433,7 @@ async def extract_transaction(
         raise ExtractionError(str(e))
 
 
-def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
+def extract_simple_fallback(text: str, usd_rate: float = None) -> Optional[ExtractedTransaction]:
     """Simple fallback extraction without LLM for common Vietnamese patterns."""
     from app.shared.date_utils import VIETNAM_TZ, parse_vietnamese_date
 
@@ -447,7 +451,7 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
     detected_currency = "VND"
 
     # Try to find USD amount
-    usd_amount, usd_currency = parse_usd_amount(text)
+    usd_amount, usd_currency = parse_usd_amount(text, usd_rate)
     if usd_amount:
         amount = usd_amount
         detected_currency = usd_currency
