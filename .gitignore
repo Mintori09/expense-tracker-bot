@@ -1,0 +1,16 @@
+.direnv
+.devenv
+.python-version
+__pycache__
+*.pyc
+.venv
+venv
+.mypy_cache
+.ruff_cache
+
+# Environment files
+.env
+
+# Log files
+*.log
+bot.log
