@@ -29,7 +29,7 @@ nix develop
 pip install -r requirements.txt
 
 # Run the bot
-python main.py
+python -m app.main
 ```
 
 ### Installation without Nix
@@ -46,7 +46,7 @@ cp .env.example .env
 # Edit .env with your bot token
 
 # Run
-python main.py
+python -m app.main
 ```
 
 Or on Arch Linux:
@@ -58,21 +58,22 @@ pip install -r requirements.txt
 
 ### Environment Variables
 
-| Variable | Description | Default |
-| --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token | Required |
-| `LLM_API_KEY` | API key for LLM (use "ollama" for local) | ollama |
-| `LLM_BASE_URL` | LLM API endpoint | http://localhost:11434/v1 |
-| `LLM_MODEL` | LLM model name | gemma2:9b |
-| `SQLITE_PATH` | SQLite database path | data/expenses.db |
-| `EXCEL_PATH` | Excel export path | data/expenses.xlsx |
+| Variable             | Description                              | Default                    |
+| -------------------- | ---------------------------------------- | -------------------------- |
+| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token                  | Required                   |
+| `LLM_PROVIDER`       | LLM provider: "ollama" or "google"       | ollama                     |
+| `LLM_API_KEY`        | API key for LLM (use "ollama" for local) | ollama                     |
+| `LLM_BASE_URL`       | LLM API endpoint                         | http://localhost:11434/v1  |
+| `LLM_MODEL`          | LLM model name                           | gemma3:4b-it-qat           |
+| `SQLITE_PATH`        | SQLite database path                     | data/finance/expenses.db   |
+| `EXCEL_PATH`         | Excel export path                        | data/finance/expenses.xlsx |
 
 ## Usage
 
 ### Start the bot
 
 ```bash
-python main.py
+python -m app.main
 ```
 
 ### Commands
@@ -80,8 +81,13 @@ python main.py
 - `/start` - Show welcome message
 - `/help` - Show usage instructions
 - `/month` - Show monthly spending summary
-- `/export` - Export transactions to Excel
+- `/today` - Show today's expenses
+- `/export` - Export all transactions to Excel (sends file)
+- `/export today|week|month|year` - Export by period
 - `/review` - Show transactions needing review
+- `/edit` - Edit pending transaction
+- `/remove <id>` - Remove a transaction
+- `/getId` - Get current chat ID
 
 ### Text Format
 
@@ -99,17 +105,42 @@ Simply send a photo or PDF document containing receipt/invoice text.
 ## Project Structure
 
 ```
-├── main.py          # Telegram bot handlers
-├── config.py        # Configuration management
-├── ocr.py           # Image/PDF OCR processing (Vietnamese + English)
-├── extractor.py     # LLM-based transaction extraction
-├── database.py      # SQLite database operations
-├── storage.py       # Excel export functionality
-├── utils.py         # Helper functions and error handling
-├── requirements.txt # Python dependencies
-├── Dockerfile       # Container deployment
-├── flake.nix        # Nix development environment
-└── README.md        # Documentation
+telegram-bot/
+├── app/
+│   ├── __init__.py
+│   ├── main.py              # Entry point
+│   ├── config.py            # Configuration management
+│   ├── bot/
+│   │   ├── __init__.py
+│   │   └── dispatcher.py    # Telegram application setup
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── database.py      # SQLite database operations
+│   │   └── logging.py       # Logging setup
+│   ├── modules/
+│   │   ├── __init__.py
+│   │   └── finance/
+│   │       ├── __init__.py
+│   │       ├── handlers.py  # Telegram handlers
+│   │       ├── service.py   # Business logic
+│   │       ├── repository.py # Database operations
+│   │       ├── extractor.py  # Transaction extraction
+│   │       ├── ocr.py         # Image/PDF processing
+│   │       ├── storage.py     # Excel export
+│   │       ├── models.py      # Data models
+│   │       └── constants.py   # Module constants
+│   └── shared/
+│       ├── __init__.py
+│       ├── constants.py     # Shared constants
+│       └── exceptions.py    # Shared exceptions
+├── tests/
+│   └── modules/
+│       └── finance/         # Finance module tests
+├── data/
+│   └── finance/             # Runtime data (db, excel)
+├── logs/                    # Log files
+├── Dockerfile
+└── README.md
 ```
 
 ## Development
@@ -117,15 +148,14 @@ Simply send a photo or PDF document containing receipt/invoice text.
 ### Run tests
 
 ```bash
-python test_extraction.py
-python test_cases.py
+pytest tests/ -v
 ```
 
 ### Docker deployment
 
 ```bash
 docker build -t finance-bot .
-docker run -d --env-file .env -v $(pwd)/data:/app/data finance-bot
+docker run -d --env-file .env -v $(pwd)/data:/app/data/finance finance-bot
 ```
 
 ### Using Nix
@@ -135,7 +165,7 @@ docker run -d --env-file .env -v $(pwd)/data:/app/data finance-bot
 nix develop
 
 # Run the bot
-python main.py
+python -m app.main
 ```
 
 ## License

@@ -15,8 +15,8 @@ import pytesseract
 from pdf2image import convert_from_path
 from PIL import Image
 
-from config import ensure_data_dir, settings
-from utils import OCRFailedError
+from app.config import ensure_data_dir, settings
+from app.shared.exceptions import OCRFailedError
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +34,24 @@ def image_to_base64(image_path: str) -> str:
 
 async def image_to_text_ai(image_path: str) -> str:
     """Extract text from image using AI vision model."""
-    from openai import AsyncOpenAI
+    import json
+    
+    from app.config import get_llm_client, settings
 
-    client = AsyncOpenAI(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-    )
+    logger.info(f"=== AI Vision API call ===")
+    logger.info(f"Provider: {settings.llm_provider}, Model: {settings.llm_model}")
+    
+    client = get_llm_client()
 
     base64_image = image_to_base64(image_path)
+    logger.info(f"Image size: {len(base64_image)/1024:.1f}KB base64")
+    
+    prompt = """Extract all text from this receipt/invoice image. 
+Focus on: date, merchant name, items, amounts, total.
+Return as plain text that can be parsed for financial data.
+Vietnamese text should be preserved."""
+    
+    logger.info(f"Prompt: {prompt[:50]}...")
 
     response = await client.chat.completions.create(
         model=settings.llm_model,
@@ -49,13 +59,7 @@ async def image_to_text_ai(image_path: str) -> str:
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "text",
-                        "text": """Extract all text from this receipt/invoice image. 
-                        Focus on: date, merchant name, items, amounts, total.
-                        Return as plain text that can be parsed for financial data.
-                        Vietnamese text should be preserved."""
-                    },
+                    {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
@@ -67,7 +71,9 @@ async def image_to_text_ai(image_path: str) -> str:
     )
 
     text = response.choices[0].message.content or ""
-    logger.info(f"AI vision extracted {len(text)} chars from {image_path}")
+    logger.info(f"API response ID: {response.id}, tokens: {response.usage.total_tokens}")
+    logger.info(f"=== AI Vision completed: {len(text)} chars ===")
+    
     return text.strip()
 
 

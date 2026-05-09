@@ -6,11 +6,11 @@ import hashlib
 import logging
 import sqlite3
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from config import ensure_data_dir, settings
+from app.config import ensure_data_dir, settings
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,9 @@ def add_transaction(tx: Transaction, source_text: str = "") -> int | None:
             )
             tx_id = cursor.lastrowid
             if tx_id:
-                logger.info(f"Added transaction: {tx.merchant} - {tx.amount} {tx.currency}")
+                logger.info(
+                    f"Added transaction: {tx.merchant} - {tx.amount} {tx.currency}"
+                )
             else:
                 logger.info(f"Duplicate skipped: {tx.merchant} - {tx.amount}")
             return tx_id
@@ -165,8 +167,9 @@ def normalize_merchant(merchant: str) -> str:
         return ""
     # Remove special characters, lowercase
     import re
-    normalized = re.sub(r'[^\w\s]', '', merchant.lower())
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
+
+    normalized = re.sub(r"[^\w\s]", "", merchant.lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized
 
 
@@ -303,3 +306,92 @@ def get_learned_category(merchant: str) -> Optional[str]:
         )
         row = cursor.fetchone()
     return row[0] if row else None
+
+
+def get_transaction(tx_id: int) -> Optional[Transaction]:
+    """Get a single transaction by ID."""
+    with get_db_cursor() as cursor:
+        cursor.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,))
+        row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    return Transaction(
+        id=row[0],
+        date=row[1],
+        merchant=row[2],
+        amount=row[3],
+        currency=row[4],
+        category=row[5],
+        payment_method=row[6],
+        description=row[7],
+        source_type=row[8],
+        confidence=row[9],
+        needs_review=bool(row[10]),
+        source_hash=row[11] if len(row) > 11 else None,
+    )
+
+
+def get_today_transactions() -> list[Transaction]:
+    """Get today's transactions."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT * FROM transactions
+            WHERE date = ?
+            ORDER BY created_at DESC
+        """,
+            (today,),
+        )
+        rows = cursor.fetchall()
+
+    return [
+        Transaction(
+            id=row[0],
+            date=row[1],
+            merchant=row[2],
+            amount=row[3],
+            currency=row[4],
+            category=row[5],
+            payment_method=row[6],
+            description=row[7],
+            source_type=row[8],
+            confidence=row[9],
+            needs_review=bool(row[10]),
+            source_hash=row[11] if len(row) > 11 else None,
+        )
+        for row in rows
+    ]
+
+
+def delete_transaction(tx_id: int) -> bool:
+    """Delete a transaction by ID."""
+    with get_db_cursor() as cursor:
+        cursor.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+        return cursor.rowcount > 0
+
+
+def update_transaction(tx_id: int, tx: Transaction) -> bool:
+    """Update an existing transaction."""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE transactions
+            SET date=?, merchant=?, amount=?, currency=?, category=?, 
+                payment_method=?, description=?
+            WHERE id=?
+        """,
+            (
+                tx.date,
+                tx.merchant,
+                tx.amount,
+                tx.currency,
+                tx.category,
+                tx.payment_method,
+                tx.description,
+                tx_id,
+            ),
+        )
+        return cursor.rowcount > 0

@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # Telegram Bot
     telegram_bot_token: str
 
+    # LLM Provider: "ollama" or "google"
+    llm_provider: str = "ollama"
+
     # LLM Configuration (OpenAI-compatible)
     llm_api_key: str = "ollama"  # Default to ollama
     llm_base_url: str = "http://localhost:11434/v1"
@@ -22,11 +25,15 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "gemma3:4b-it-qat"
 
+    # Google AI Configuration
+    google_api_key: str = ""
+    google_model: str = "gemini-1.5-flash"
+
     # Database
-    sqlite_path: str = "data/expenses.db"
+    sqlite_path: str = "data/finance/expenses.db"
 
     # Excel Storage
-    excel_path: str = "data/expenses.xlsx"
+    excel_path: str = "data/finance/expenses.xlsx"
 
     # Logging
     log_level: str = "INFO"
@@ -72,3 +79,21 @@ def ensure_data_dir():
     """Ensure data directory exists."""
     Path(settings.sqlite_path).parent.mkdir(parents=True, exist_ok=True)
     Path(settings.excel_path).parent.mkdir(parents=True, exist_ok=True)
+
+
+def get_llm_client():
+    """Get the appropriate LLM client based on provider."""
+    if settings.llm_provider == "google":
+        from openai import AsyncOpenAI
+
+        return AsyncOpenAI(
+            api_key=settings.google_api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+    else:
+        from openai import AsyncOpenAI
+
+        return AsyncOpenAI(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+        )

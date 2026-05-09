@@ -10,8 +10,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from config import settings
-from utils import ExtractionError
+from app.config import settings
+from app.shared.exceptions import ExtractionError
 
 logger = logging.getLogger(__name__)
 
@@ -109,9 +109,15 @@ def parse_vietnamese_amount(text: str) -> Optional[float]:
 
 async def call_llm(prompt: str) -> str:
     """Call LLM API to get response."""
-    from openai import AsyncOpenAI
+    import json
+    
+    from app.config import get_llm_client, settings
 
-    client = AsyncOpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
+    logger.info(f"=== LLM API call ===")
+    logger.info(f"Provider: {settings.llm_provider}, Model: {settings.llm_model}")
+    logger.info(f"Prompt: {prompt[:100]}...")
+
+    client = get_llm_client()
 
     response = await client.chat.completions.create(
         model=settings.llm_model,
@@ -123,7 +129,12 @@ async def call_llm(prompt: str) -> str:
         max_tokens=500,
     )
 
-    return response.choices[0].message.content
+    result = response.choices[0].message.content
+    logger.info(f"API response ID: {response.id}, tokens: {response.usage.total_tokens}")
+    logger.info(f"Raw response: {result[:200] if result else 'None'}...")
+    logger.info(f"=== LLM API completed ===")
+
+    return result
 
 
 def get_system_prompt() -> str:
@@ -155,18 +166,99 @@ Rules:
 """
 
 
+async def extract_transactions(text: str, source_type: str = "text") -> list[ExtractedTransaction]:
+    """Extract multiple transactions from invoice/receipt text using LLM."""
+    logger.info(f"=== Extracting transactions from: '{text[:100]}...' (source: {source_type})")
+    
+    system_prompt = """You are a finance data extraction assistant.
+
+Extract ALL items from the invoice/receipt. Each line item is a separate transaction.
+
+Return JSON array with this schema:
+[
+  {
+    "date": "YYYY-MM-DD",
+    "merchant": "string or null",
+    "amount": number,
+    "currency": "VND",
+    "category": "Food | Coffee | Groceries | Transport | Rent | Utilities | Shopping | Health | Education | Entertainment | Travel | Subscription | Income | Other",
+    "payment_method": "Cash | Bank Transfer | Card | E-wallet | Unknown",
+    "description": "item description"
+  }
+]
+
+Rules:
+- If date missing, use today's date
+- Convert "k" to thousand VND (e.g., "85k" = 85000)
+- Use the same merchant for all items
+- If no specific date mentioned, use today
+- Return valid JSON array only"""
+
+    try:
+        from app.config import get_llm_client, settings
+
+        client = get_llm_client()
+
+        response = await client.chat.completions.create(
+            model=settings.llm_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.1,
+            max_tokens=1000,
+        )
+
+        result_text = response.choices[0].message.content or "[]"
+        logger.info(f"Multi-transaction API response: {result_text[:200]}")
+        
+        # Parse as array
+        data = json.loads(result_text.strip())
+        
+        transactions = []
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        for item in data:
+            try:
+                tx = ExtractedTransaction(
+                    date=item.get("date") or today,
+                    merchant=item.get("merchant"),
+                    amount=float(item.get("amount", 0)),
+                    currency=item.get("currency", "VND"),
+                    category=item.get("category", "Other"),
+                    payment_method=item.get("payment_method", "Unknown"),
+                    description=item.get("description", ""),
+                    source_type=source_type,
+                    confidence=0.9,
+                    needs_review=False,
+                )
+                transactions.append(tx)
+            except Exception as e:
+                logger.warning(f"Failed to parse item: {item}, error: {e}")
+        
+        logger.info(f"=== Extracted {len(transactions)} transactions ===")
+        return transactions
+        
+    except Exception as e:
+        logger.error(f"Multi-transaction extraction failed: {e}")
+        return []  # Return empty list to fall back to single transaction
+
+
 async def extract_transaction(
     text: str, source_type: str = "text"
 ) -> ExtractedTransaction:
     """Extract transaction data from text using LLM."""
+    logger.info(f"=== Extracting transaction from: '{text[:50]}...' (source: {source_type})")
+    
     try:
         response = await call_llm(text)
 
         # Strip markdown code blocks if present
-        response = re.sub(r"```json\s*|\s*```", "", response).strip()
+        cleaned_response = re.sub(r"```json\s*|\s*```", "", response).strip()
+        logger.info(f"LLM cleaned response: {cleaned_response[:100]}...")
 
         # Parse JSON response
-        data = json.loads(response)
+        data = json.loads(cleaned_response)
 
         # Validate required fields
         if "amount" not in data:
@@ -200,7 +292,7 @@ async def extract_transaction(
         if confidence < 0.7:
             needs_review = True
 
-        return ExtractedTransaction(
+        result = ExtractedTransaction(
             date=date,
             merchant=data.get("merchant"),
             amount=amount,
@@ -212,9 +304,12 @@ async def extract_transaction(
             confidence=confidence,
             needs_review=needs_review,
         )
+        
+        logger.info(f"=== Extracted: {result.merchant} - {result.amount} - {result.category} ===")
+        return result
 
     except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}")
+        logger.error(f"JSON decode error: {e}, response was: {response[:100]}")
         raise ExtractionError("Failed to parse LLM response")
     except Exception as e:
         logger.error(f"Extraction error: {e}")
@@ -257,28 +352,21 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
 
     if amount and amount > 0:
         # Clean up merchant name - remove common prefixes (Vietnamese verbs/phrases)
-        # Pattern: verb + location + merchant -> merchant
-        # Remove verbs (ăn, mua, etc.) - include "tối" (dinner)
         merchant = re.sub(
             r"\b(ăn|mua|chi|pay|paid|spent|giao\s?dịch|sáng|trưa|chiều|đêm|tối|cà\s?phê|internet)\b\s*",
             "",
             merchant,
             flags=re.IGNORECASE,
         )
-        # Remove VND/dong currency indicators
         merchant = re.sub(r"\s*(?:vnd|đồng)\b", "", merchant, flags=re.IGNORECASE)
-        # Remove location prefixes (ở, tại) as standalone words - use word boundaries
         merchant = re.sub(r"\s+(?:ở|tại)\s+", " ", merchant, flags=re.IGNORECASE)
         merchant = re.sub(r"^(?:ở|tại)\s+", "", merchant, flags=re.IGNORECASE)
-        # Remove trailing time indicators and suffixes
         merchant = re.sub(r"\s*/tháng\s*$", "", merchant, flags=re.IGNORECASE)
-        # Clean up extra whitespace
         merchant = re.sub(r"\s+", " ", merchant).strip(" -:/")
 
         if not merchant or merchant.lower() in ["vnd", "đồng"]:
             merchant = "Unknown"
 
-        # Try to get learned category
         category = get_category_for_merchant(merchant) or "Other"
 
         return ExtractedTransaction(
@@ -295,3 +383,59 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
         )
 
     return None
+
+
+def extract_multiple_fallback(text: str) -> list[ExtractedTransaction]:
+    """Extract multiple transactions from text with comma-separated amounts.
+    
+    Example: "30k đánh cầu sân win win, 50k đánh cầu sân lâm gia"
+    Returns: [30k transaction, 50k transaction]
+    """
+    transactions = []
+    
+    # Find all k/tr amounts in the text
+    k_matches = list(re.finditer(r"(\d+(?:[.,]\d+)?)\s*k", text, re.IGNORECASE))
+    tr_matches = list(re.finditer(r"(\d+(?:[.,]\d+)?)\s*tr", text, re.IGNORECASE))
+    
+    # Combine and sort by position
+    all_matches = [(m.start(), 'k', m) for m in k_matches] + [(m.start(), 'tr', m) for m in tr_matches]
+    all_matches.sort(key=lambda x: x[0])
+    
+    if len(all_matches) <= 1:
+        return transactions  # Not multiple transactions
+    
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    for i, (pos, type_, match) in enumerate(all_matches):
+        if type_ == 'k':
+            amount = float(match.group(1).replace(",", ".")) * 1000
+        else:
+            amount = float(match.group(1).replace(",", ".")) * 1000000
+        
+        # Extract text between this match and the next one (or end of string)
+        start_pos = match.end()
+        if i + 1 < len(all_matches):
+            end_pos = all_matches[i + 1][2].start()
+        else:
+            end_pos = len(text)
+        
+        item_text = text[start_pos:end_pos].strip(" ,;-")
+        
+        # Clean up the item text
+        item_text = re.sub(r"\s+", " ", item_text).strip()
+        
+        if item_text:
+            transactions.append(ExtractedTransaction(
+                date=today,
+                merchant=None,
+                amount=amount,
+                currency="VND",
+                category="Other",
+                payment_method="Unknown",
+                description=item_text[:50],
+                source_type="text",
+                confidence=0.7,
+                needs_review=True,
+            ))
+    
+    return transactions

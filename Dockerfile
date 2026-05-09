@@ -15,13 +15,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY *.py ./
+COPY app/ ./app/
 
 # Create data directory
-RUN mkdir -p data
+RUN mkdir -p data/finance
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 
 # Run the bot
-CMD ["python", "main.py"]
+CMD ["python", "-m", "app.main"]

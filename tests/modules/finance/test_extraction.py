@@ -1,14 +1,17 @@
-#!/usr/bin/env python3
 """Test script for transaction extraction and database."""
 
-from database import (
+import asyncio
+
+import pytest
+
+from app.core.database import (
     Transaction,
     add_transaction,
     get_monthly_summary,
     get_transactions,
-    init_db,
+    init_schema,
 )
-from extractor import (
+from app.modules.finance.extractor import (
     extract_simple_fallback,
     extract_transaction,
     parse_vietnamese_amount,
@@ -62,7 +65,7 @@ def test_database():
     print("\n=== Database Tests ===")
 
     # Initialize DB
-    init_db()
+    init_schema()
     print("✓ Database initialized")
 
     # Add test transaction
@@ -91,6 +94,7 @@ def test_database():
     print(f"✓ Monthly summary: Total {summary['total_spent']} VND")
 
 
+@pytest.mark.asyncio
 async def test_llm_extraction():
     """Test LLM extraction (requires running Ollama)."""
     print("\n=== LLM Extraction Tests ===")

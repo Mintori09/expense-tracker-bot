@@ -1,28 +1,9 @@
-"""
-Logging and error handling setup.
-"""
+"""Shared exceptions and error handling."""
 
 import logging
-import sys
 from typing import Optional
 
-from config import settings
-
-
-def setup_logging():
-    """Configure application logging."""
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper()),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler("bot.log", encoding="utf-8"),
-        ],
-    )
-    return logging.getLogger(__name__)
-
-
-logger = setup_logging()
+logger = logging.getLogger(__name__)
 
 
 class ExtractionError(Exception):

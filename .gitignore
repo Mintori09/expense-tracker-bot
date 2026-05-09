@@ -13,4 +13,13 @@ venv
 
 # Log files
 *.log
-bot.log
+logs/*.log
+
+# Runtime data files (keep structure but ignore contents)
+data/**/*.db
+data/**/*.xlsx
+!data/finance/.gitkeep
+
+# Python
+.pytest_cache
+*.egg-info

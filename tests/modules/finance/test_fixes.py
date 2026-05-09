@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test file to verify the fixes for:
 1. JSON parsing with markdown code blocks
@@ -10,12 +9,14 @@ import asyncio
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from datetime import datetime
 
-from database import Transaction, add_transaction, get_monthly_summary, init_schema
-from extractor import (
+from app.core.database import Transaction, add_transaction, get_monthly_summary, init_schema
+from app.modules.finance.extractor import (
     extract_simple_fallback,
     extract_transaction,
     parse_vietnamese_amount,
@@ -89,6 +90,7 @@ def test_fallback_extraction():
             print(f"  ✗ '{text}' - No extraction")
 
 
+@pytest.mark.asyncio
 async def test_llm_extraction():
     """Test LLM extraction with the fixes."""
     print("\n=== Test: LLM Extraction ===")
@@ -104,7 +106,7 @@ async def test_llm_extraction():
             # Verify date is today
             today = datetime.now().strftime("%Y-%m-%d")
             date_ok = result.date == today
-            amount_ok = result.amount == expected_amount
+            _amount_ok = result.amount == expected_amount
             print(
                 f"  ✓ '{text}' -> Amount: {result.amount}, Date: {result.date} {'(today)' if date_ok else '(wrong date!)'}"
             )
@@ -112,6 +114,7 @@ async def test_llm_extraction():
             print(f"  ✗ '{text}' - Error: {e}")
 
 
+@pytest.mark.asyncio
 async def test_full_flow():
     """Test the complete flow from message to database."""
     print("\n=== Test: Full Flow ===")

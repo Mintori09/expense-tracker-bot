@@ -1,18 +1,17 @@
-#!/usr/bin/env python3
-"""Test cases for Finance Automation Bot."""
+"""Tests for Finance module."""
 
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from database import (
+from app.core.database import (
     Transaction,
     add_transaction,
     find_duplicates,
-    init_db,
+    init_schema,
 )
-from extractor import extract_simple_fallback
+from app.modules.finance.extractor import extract_simple_fallback
 
 
 def test_text_input_formats():
@@ -59,7 +58,7 @@ def test_duplicate_detection():
     """Test duplicate detection."""
     print("\n=== Duplicate Detection Tests ===")
 
-    init_db()
+    init_schema()
 
     # Add test transactions
     t1 = Transaction(
