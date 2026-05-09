@@ -2,8 +2,8 @@
 
 import logging
 
-from telegram import BotCommand
-from telegram.ext import Application, Update
+from telegram import BotCommand, Update
+from telegram.ext import Application
 
 from app.config import settings
 from app.modules.finance.handlers import register_finance_handlers
