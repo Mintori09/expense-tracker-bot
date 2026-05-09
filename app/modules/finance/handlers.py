@@ -83,6 +83,8 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 /getId - Lấy Chat ID và User ID
 /month - Thống kê chi tiêu tháng
 /today - Chi tiêu hôm nay
+/week - Chi tiêu tuần này  
+/7days - Chi tiêu 7 ngày gần đây
 /current - Số dư hiện tại
 /setbalance - Đặt số dư đầu kỳ
 /remove <id> - Xóa giao dịch
@@ -100,6 +102,8 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 /getId - Get Chat ID and User ID
 /month - Monthly spending summary
 /today - Today's expenses
+/week - This week's expenses
+/7days - Last 7 days expenses
 /current - Current balance
 /setbalance - Set initial balance
 /remove <id> - Remove transaction
@@ -948,6 +952,20 @@ def register_finance_handlers(application) -> None:
     application.add_handler(CommandHandler("current", current_command))
     application.add_handler(CommandHandler("setbalance", setbalance_command))
     application.add_handler(CommandHandler("language", language_command))
+    application.add_handler(CommandHandler("week", week_command))
+
+    # Register dynamic command handler for /Ndays
+    from telegram.ext import MessageHandler
+    from telegram import Update
+    import re
+    
+    async def handle_days_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message and re.match(r"/\d+days", update.message.text.strip(), re.IGNORECASE):
+            await days_command(update, context)
+        elif update.message and update.message.text.strip().lower().startswith("/days"):
+            await days_command(update, context)
+    
+    application.add_handler(MessageHandler(filters.COMMAND, handle_days_command))
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
@@ -956,4 +974,94 @@ def register_finance_handlers(application) -> None:
     application.add_handler(MessageHandler(filters.Document.PDF, handle_document))
 
     application.add_handler(CallbackQueryHandler(button_callback))
+
+
+async def days_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show expenses for the last N days. Format: /<number>days"""
+    if not update.message:
+        return
+
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+    from app.modules.finance.storage import get_transactions_last_n_days
+    lang = get_user_language(user_id) if user_id else "vi"
+
+    text = update.message.text.strip()
+    parts = text.split()
+    
+    # Parse number of days from command
+    command = parts[0].lower()
+    days = 7  # default
+    
+    # Try to parse number from command like "/7days"
+    import re
+    match = re.match(r"/(\d+)days", command)
+    if match:
+        days = int(match.group(1))
+        if days < 1:
+            days = 1
+        if days > 365:
+            days = 365
+    else:
+        # Try to get from arguments like "/days 7"
+        if len(parts) > 1:
+            try:
+                days = int(parts[1])
+                if days < 1:
+                    days = 1
+                if days > 365:
+                    days = 365
+            except ValueError:
+                pass
+
+    txs = get_transactions_last_n_days(days, user_id)
+    total = sum(tx.amount for tx in txs)
+
+    if lang == "vi":
+        msg = f"*Chi tiêu {days} ngày gần đây:* {total:,.0f} VND\n\n"
+        if txs:
+            for tx in txs:
+                msg += f"• {tx.date} - {tx.amount:,.0f} VND - {tx.description or 'Không rõ'} - {tx.merchant or ''} ({tx.category})\n"
+        else:
+            msg += "Không có giao dịch nào."
+    else:
+        msg = f"*Last {days} days expenses:* {total:,.0f} VND\n\n"
+        if txs:
+            for tx in txs:
+                msg += f"• {tx.date} - {tx.amount:,.0f} VND - {tx.description or 'Unknown'} - {tx.merchant or ''} ({tx.category})\n"
+        else:
+            msg += "No transactions found."
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show weekly expenses."""
+    if not update.message:
+        return
+
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+    from app.modules.finance.storage import get_transactions_by_period
+    lang = get_user_language(user_id) if user_id else "vi"
+
+    txs = get_transactions_by_period("week", user_id=user_id)
+    total = sum(tx.amount for tx in txs)
+
+    if lang == "vi":
+        msg = f"*Chi tiêu tuần này:* {total:,.0f} VND\n\n"
+        if txs:
+            for tx in txs:
+                msg += f"• {tx.date} - {tx.amount:,.0f} VND - {tx.description or 'Không rõ'} - {tx.merchant or ''} ({tx.category})\n"
+        else:
+            msg += "Không có giao dịch nào."
+    else:
+        msg = f"*This week expenses:* {total:,.0f} VND\n\n"
+        if txs:
+            for tx in txs:
+                msg += f"• {tx.date} - {tx.amount:,.0f} VND - {tx.description or 'Unknown'} - {tx.merchant or ''} ({tx.category})\n"
+        else:
+            msg += "No transactions found."
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
 

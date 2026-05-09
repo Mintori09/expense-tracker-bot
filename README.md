@@ -82,6 +82,8 @@ python -m app.main
 - `/help` - Show usage instructions
 - `/month` - Show monthly spending summary
 - `/today` - Show today's expenses
+- `/week` - Show this week's expenses
+- `/7days` - Show last 7 days expenses (can use any number like `/14days`, `/30days`)
 - `/export` - Export all transactions to Excel (sends file)
 - `/export today|week|month|year` - Export by period
 - `/review` - Show transactions needing review

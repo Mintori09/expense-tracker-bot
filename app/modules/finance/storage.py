@@ -9,6 +9,45 @@ from app.core.database import Transaction, get_db_cursor, get_transactions
 logger = logging.getLogger(__name__)
 
 
+def get_transactions_last_n_days(n: int, user_id: int = None) -> list[Transaction]:
+    """Get transactions from the last N days."""
+    now = datetime.now()
+    start = now - timedelta(days=n - 1)
+    end = now
+    
+    query = "SELECT * FROM transactions WHERE date BETWEEN ? AND ?"
+    params = [start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")]
+    
+    if user_id:
+        query += " AND user_id = ?"
+        params.append(user_id)
+    
+    query += " ORDER BY date DESC"
+    
+    with get_db_cursor() as cursor:
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+    
+    return [
+        Transaction(
+            id=row[0],
+            date=row[1],
+            merchant=row[2],
+            amount=row[3],
+            currency=row[4],
+            category=row[5],
+            payment_method=row[6],
+            description=row[7],
+            source_type=row[8],
+            confidence=row[9],
+            needs_review=bool(row[10]),
+            source_hash=row[11] if len(row) > 11 else None,
+            user_id=row[12] if len(row) > 12 else None,
+        )
+        for row in rows
+    ]
+
+
 def export_to_excel(transactions: list[Transaction] = None) -> str:
     """Export transactions to Excel file."""
     ensure_data_dir()

@@ -120,6 +120,36 @@ def parse_vietnamese_amount(text: str) -> Optional[float]:
     return None
 
 
+# USD to VND exchange rate (approximate, can be updated dynamically)
+USD_TO_VND_RATE = 25000
+
+
+def parse_usd_amount(text: str) -> tuple[Optional[float], Optional[str]]:
+    """Parse USD amount format like '$10', '10 USD', '10 dollars'.
+
+    Returns:
+        Tuple of (amount_in_vnd, currency_code) or (None, None) if not USD
+    """
+    text_lower = text.lower().strip()
+
+    # Match patterns: $10, $10.50, 10$, 10 usd, 10 dollars
+    usd_patterns = [
+        r"\$(\d+(?:[.,]\d+)?)",  # $10, $10.50
+        r"(\d+(?:[.,]\d+)?)\s*\$",  # 10$, 10.50$
+        r"(\d+(?:[.,]\d+)?)\s*usd",  # 10 USD
+        r"(\d+(?:[.,]\d+)?)\s*dollars?",  # 10 dollars
+    ]
+
+    for pattern in usd_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            usd_amount = float(match.group(1).replace(",", "."))
+            vnd_amount = usd_amount * USD_TO_VND_RATE
+            return vnd_amount, "USD"
+
+    return None, None
+
+
 async def call_llm(prompt: str) -> str:
     """Call LLM API to get response."""
 
@@ -369,34 +399,43 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
     if date is None:
         date = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
 
-    # Find amount first
+    # Find amount first - check USD first, then VND
     amount = None
-    merchant = None
+    merchant_text = text
+    detected_currency = "VND"
 
-    # Try to find amount with k or tr suffix first
-    k_match = re.search(r"(\d+(?:[.,]\d+)?)\s*k", text, re.IGNORECASE)
-    tr_match = re.search(r"(\d+(?:[.,]\d+)?)\s*tr", text, re.IGNORECASE)
-
-    if k_match:
-        amount = float(k_match.group(1).replace(",", ".")) * 1000
-        # Remove the matched amount from text to get merchant
-        merchant = (text[: k_match.start()] + " " + text[k_match.end() :]).strip()
-    elif tr_match:
-        amount = float(tr_match.group(1).replace(",", ".")) * 1000000
-        merchant = (text[: tr_match.start()] + " " + text[tr_match.end() :]).strip()
+    # Try to find USD amount
+    usd_amount, usd_currency = parse_usd_amount(text)
+    if usd_amount:
+        amount = usd_amount
+        detected_currency = usd_currency
+        # Remove USD pattern from text
+        for pattern in [r"\$(\d+(?:[.,]\d+)?)", r"(\d+(?:[.,]\d+)?)\s*\$", r"(\d+(?:[.,]\d+)?)\s*usd", r"(\d+(?:[.,]\d+)?)\s*dollars?"]:
+            merchant_text = re.sub(pattern, "", text, flags=re.IGNORECASE)
     else:
-        # Try standard number format
-        num_match = re.search(r"(\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)", text)
-        if num_match:
-            num_str = num_match.group(1)
-            if "." in num_str and "," not in num_str:
-                num_str = num_str.replace(".", "")
-            elif "," in num_str and "." not in num_str:
-                num_str = num_str.replace(",", "")
-            amount = float(num_str)
-            merchant = (
-                text[: num_match.start()] + " " + text[num_match.end() :]
-            ).strip()
+        # Try to find amount with k or tr suffix first
+        k_match = re.search(r"(\d+(?:[.,]\d+)?)\s*k", text, re.IGNORECASE)
+        tr_match = re.search(r"(\d+(?:[.,]\d+)?)\s*tr", text, re.IGNORECASE)
+
+        if k_match:
+            amount = float(k_match.group(1).replace(",", ".")) * 1000
+            merchant_text = (text[: k_match.start()] + " " + text[k_match.end() :]).strip()
+        elif tr_match:
+            amount = float(tr_match.group(1).replace(",", ".")) * 1000000
+            merchant_text = (text[: tr_match.start()] + " " + text[tr_match.end() :]).strip()
+        else:
+            # Try standard number format
+            num_match = re.search(r"(\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)", text)
+            if num_match:
+                num_str = num_match.group(1)
+                if "." in num_str and "," not in num_str:
+                    num_str = num_str.replace(".", "")
+                elif "," in num_str and "." not in num_str:
+                    num_str = num_str.replace(",", "")
+                amount = float(num_str)
+                merchant_text = (
+                    text[: num_match.start()] + " " + text[num_match.end() :]
+                ).strip()
 
     if amount and amount > 0:
         # Clean up merchant name - remove common prefixes (Vietnamese verbs/phrases and date expressions)
