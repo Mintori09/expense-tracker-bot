@@ -2,8 +2,8 @@
 
 import logging
 
-from telegram import BotCommand, Update
-from telegram.ext import Application
+from telegram import BotCommand
+from telegram.ext import Application, Update
 
 from app.config import settings
 from app.modules.finance.handlers import register_finance_handlers
@@ -23,6 +23,7 @@ BOT_COMMANDS = [
     BotCommand("edit", "Edit transaction"),
     BotCommand("remove", "Remove transaction"),
     BotCommand("getId", "Get chat ID"),
+    BotCommand("language", "Change language"),
 ]
 
 
@@ -36,9 +37,9 @@ def create_application() -> Application:
     return application
 
 
-async def on_startup(application: Application) -> None:
+async def set_bot_commands(app: Application) -> None:
     """Set bot commands on startup."""
-    await application.bot.set_my_commands(BOT_COMMANDS)
+    await app.bot.set_my_commands(BOT_COMMANDS)
     logger.info("Bot commands set")
 
 
@@ -46,8 +47,8 @@ def run_bot() -> None:
     """Start the bot polling."""
     application = create_application()
     
-    # Set commands before polling starts
-    application.post_init.append(on_startup)
+    # Set post_init callback directly
+    application.post_init = set_bot_commands
     
     logger.info("Starting bot...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
