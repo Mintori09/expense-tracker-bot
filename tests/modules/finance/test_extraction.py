@@ -1,19 +1,12 @@
 """Test script for transaction extraction and database."""
 
-import asyncio
+import os
+import tempfile
 
 import pytest
 
-from app.core.database import (
-    Transaction,
-    add_transaction,
-    get_monthly_summary,
-    get_transactions,
-    init_schema,
-)
 from app.modules.finance.extractor import (
     extract_simple_fallback,
-    extract_transaction,
     parse_vietnamese_amount,
 )
 
@@ -60,8 +53,27 @@ def test_fallback_extraction():
             print(f"✗ '{text}' - No match")
 
 
+# Use temp directory for test database
+_test_db_fd, _test_db_path = tempfile.mkstemp(suffix=".db")
+os.close(_test_db_fd)
+
+
 def test_database():
     """Test database operations."""
+    from app.config import settings
+
+    # Override database path for tests
+    original_path = settings.sqlite_path
+    settings.sqlite_path = _test_db_path
+
+    from app.core.database import (
+        Transaction,
+        add_transaction,
+        get_monthly_summary,
+        get_transactions,
+        init_schema,
+    )
+
     print("\n=== Database Tests ===")
 
     # Initialize DB
@@ -93,28 +105,23 @@ def test_database():
     summary = get_monthly_summary(2025, 1)
     print(f"✓ Monthly summary: Total {summary['total_spent']} VND")
 
-
-@pytest.mark.asyncio
-async def test_llm_extraction():
-    """Test LLM extraction (requires running Ollama)."""
-    print("\n=== LLM Extraction Tests ===")
-    for text in test_samples[:3]:  # Test first 3
-        try:
-            result = await extract_transaction(text)
-            print(f"✓ '{text}'")
-            print(
-                f"   -> Amount: {result.amount}, Merchant: {result.merchant}, Category: {result.category}"
-            )
-        except Exception as e:
-            print(f"✗ '{text}' - Error: {e}")
+    # Cleanup
+    settings.sqlite_path = original_path
+    try:
+        os.unlink(_test_db_path)
+    except Exception:
+        pass
 
 
-if __name__ == "__main__":
-    test_parse_amount()
-    test_fallback_extraction()
-    test_database()
+# Cleanup on exit
+import atexit
 
-    # Uncomment to test LLM extraction (requires Ollama running)
-    # asyncio.run(test_llm_extraction())
 
-    print("\n=== All tests completed ===")
+def _cleanup_test_db():
+    try:
+        os.unlink(_test_db_path)
+    except Exception:
+        pass
+
+
+atexit.register(_cleanup_test_db)

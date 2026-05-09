@@ -2,16 +2,14 @@
 
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from app.core.database import (
-    Transaction,
-    add_transaction,
-    find_duplicates,
-    init_schema,
-)
 from app.modules.finance.extractor import extract_simple_fallback
+
+# Use temp database for tests
+_test_db_fd, _test_db_path = tempfile.mkstemp(suffix=".db")
 
 
 def test_text_input_formats():
@@ -56,6 +54,18 @@ def test_text_input_formats():
 
 def test_duplicate_detection():
     """Test duplicate detection."""
+    from app.config import settings
+
+    original_path = settings.sqlite_path
+    settings.sqlite_path = _test_db_path
+
+    from app.core.database import (
+        Transaction,
+        add_transaction,
+        find_duplicates,
+        init_schema,
+    )
+
     print("\n=== Duplicate Detection Tests ===")
 
     init_schema()
@@ -77,6 +87,8 @@ def test_duplicate_detection():
 
     # Find duplicates
     duplicates = find_duplicates("Highlands Coffee", 65000, "2025-01-15")
+
+    settings.sqlite_path = original_path
 
     if len(duplicates) > 0:
         print(f"✓ Duplicate detection works: Found {len(duplicates)} duplicate(s)")

@@ -103,6 +103,7 @@ async def process_expense_text(
         logger.warning("LLM extraction failed: %s, trying fallback", e)
 
         # Try to get realtime USD rate
+        from app.modules.finance.extractor import USD_TO_VND_RATE, get_usd_to_vnd_rate
         usd_rate = USD_TO_VND_RATE
         if "$" in text or "usd" in text.lower() or "dollar" in text.lower():
             try:

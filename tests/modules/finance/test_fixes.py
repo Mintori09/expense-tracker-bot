@@ -8,6 +8,7 @@ Test file to verify the fixes for:
 import asyncio
 import os
 import sys
+import tempfile
 
 import pytest
 
@@ -15,12 +16,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from datetime import datetime
 
-from app.core.database import Transaction, add_transaction, get_monthly_summary, init_schema
 from app.modules.finance.extractor import (
     extract_simple_fallback,
     extract_transaction,
     parse_vietnamese_amount,
 )
+
+# Use temp database for tests
+_test_db_fd, _test_db_path = tempfile.mkstemp(suffix=".db")
+os.close(_test_db_fd)
 
 
 def test_json_parsing_with_markdown():
@@ -117,6 +121,19 @@ async def test_llm_extraction():
 @pytest.mark.asyncio
 async def test_full_flow():
     """Test the complete flow from message to database."""
+    from app.config import settings
+
+    # Override database path for tests
+    original_path = settings.sqlite_path
+    settings.sqlite_path = _test_db_path
+
+    from app.core.database import (
+        Transaction,
+        add_transaction,
+        get_monthly_summary,
+        init_schema,
+    )
+
     print("\n=== Test: Full Flow ===")
 
     init_schema()
@@ -151,6 +168,9 @@ async def test_full_flow():
     print(f"\n  Monthly total: {summary['total_spent']:,.0f} VND")
     assert summary["total_spent"] > 0, "Monthly total should be > 0"
     print("  ✓ Full flow test passed")
+
+    # Restore original path
+    settings.sqlite_path = original_path
 
 
 if __name__ == "__main__":

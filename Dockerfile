@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ ./app/
 
-# Create data directory
-RUN mkdir -p data/finance
+# Create data directory (mount volume will override)
+RUN mkdir -p data
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

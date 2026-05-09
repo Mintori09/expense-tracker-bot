@@ -135,7 +135,7 @@ def set_usd_to_vnd_rate(rate: float) -> None:
 async def get_usd_to_vnd_rate() -> float:
     """Fetch current USD to VND exchange rate from external API.
 
-    Uses Vietcombank API or falls back to cached/fixed rate.
+    Uses open.er-api.com (free, reliable) or falls back to cached/fixed rate.
     """
     import time
 
@@ -148,17 +148,18 @@ async def get_usd_to_vnd_rate() -> float:
         import httpx
 
         async with httpx.AsyncClient(timeout=5.0) as client:
-            # Try Vietcombank API
+            # Try open.er-api.com (free, no API key needed)
             response = await client.get(
-                "https://vapi.vn/app_devices/api/v1/dothi/bank/vietcombank"
+                "https://open.er-api.com/v6/latest/USD"
             )
             if response.status_code == 200:
                 data = response.json()
-                if "results" in data and len(data["results"]) > 0:
-                    rate = float(data["results"][0].get("transfer_usd_sell", 0))
+                if data.get("result") == "success" and "rates" in data:
+                    rate = float(data["rates"].get("VND", 0))
                     if rate > 0:
                         _usd_rate_cache["rate"] = rate
                         _usd_rate_cache["timestamp"] = now
+                        logger.info(f"Quy USD rate: {rate}")
                         return rate
     except Exception as e:
         logger.warning(f"Failed to fetch USD rate: {e}")
