@@ -122,6 +122,41 @@ def parse_vietnamese_amount(text: str) -> Optional[float]:
 
 # USD to VND exchange rate (approximate, can be updated dynamically)
 USD_TO_VND_RATE = 25000
+_usd_rate_cache = {"rate": USD_TO_VND_RATE, "timestamp": None}
+
+
+async def get_usd_to_vnd_rate() -> float:
+    """Fetch current USD to VND exchange rate from external API.
+
+    Uses Vietcombank API or falls back to cached/fixed rate.
+    """
+    import time
+
+    # Check cache - refresh every hour
+    now = time.time()
+    if _usd_rate_cache["timestamp"] and (now - _usd_rate_cache["timestamp"]) < 3600:
+        return _usd_rate_cache["rate"]
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Try Vietcombank API
+            response = await client.get(
+                "https://vapi.vn/app_devices/api/v1/dothi/bank/vietcombank"
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if "results" in data and len(data["results"]) > 0:
+                    rate = float(data["results"][0].get("transfer_usd_sell", 0))
+                    if rate > 0:
+                        _usd_rate_cache["rate"] = rate
+                        _usd_rate_cache["timestamp"] = now
+                        return rate
+    except Exception as e:
+        logger.warning(f"Failed to fetch USD rate: {e}")
+
+    return _usd_rate_cache["rate"]
 
 
 def parse_usd_amount(text: str) -> tuple[Optional[float], Optional[str]]:
@@ -442,7 +477,7 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
         merchant = re.sub(
             r"\b(ăn|mua|chi|pay|paid|spent|giao\s?dịch|sáng|trưa|chiều|đêm|tối|cà\s?phê|internet|hôm qua|hôm kia|ngày mai|mống mai|hôm nay|nay|ngày này tháng trước|ngày này tuần trước|ngày này năm trước)\b\s*",
             "",
-            merchant,
+            merchant_text,
             flags=re.IGNORECASE,
         )
         merchant = re.sub(r"\s*(?:vnd|đồng)\b", "", merchant, flags=re.IGNORECASE)
