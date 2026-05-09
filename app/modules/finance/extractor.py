@@ -125,6 +125,13 @@ USD_TO_VND_RATE = 25000
 _usd_rate_cache = {"rate": USD_TO_VND_RATE, "timestamp": None}
 
 
+def set_usd_to_vnd_rate(rate: float) -> None:
+    """Update the USD to VND rate."""
+    global USD_TO_VND_RATE
+    USD_TO_VND_RATE = rate
+    _usd_rate_cache["rate"] = rate
+
+
 async def get_usd_to_vnd_rate() -> float:
     """Fetch current USD to VND exchange rate from external API.
 
