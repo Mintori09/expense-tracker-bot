@@ -22,7 +22,7 @@ BOT_COMMANDS = [
     BotCommand("review", "Review transactions"),
     BotCommand("edit", "Edit transaction"),
     BotCommand("remove", "Remove transaction"),
-    BotCommand("getId", "Get chat ID"),
+    BotCommand("getid", "Get chat ID"),
     BotCommand("language", "Change language"),
 ]
 
