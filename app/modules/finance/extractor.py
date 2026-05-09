@@ -52,6 +52,7 @@ class ExtractedTransaction(BaseModel):
     source_type: str = "text"
     confidence: float = Field(ge=0, le=1, default=0.9)
     needs_review: bool = False
+    chat_id: Optional[int] = None
 
     @field_validator("date")
     @classmethod

@@ -45,45 +45,56 @@ def export_to_excel(transactions: list[Transaction] = None) -> str:
     return settings.excel_path
 
 
-def get_transactions_by_period(period: str, year: int = None, month: int = None) -> list[Transaction]:
-    """Get transactions filtered by period (today, week, month, year)."""
+def get_transactions_by_period(period: str, year: int = None, month: int = None, chat_id: int = None) -> list[Transaction]:
+    """Get transactions filtered by period (today, week, month, year) and optionally by chat_id."""
     now = datetime.now()
     year = year or now.year
     month = month or now.month
     
     if period == "today":
         date = now.strftime("%Y-%m-%d")
+        query = "SELECT * FROM transactions WHERE date = ?"
+        params = [date]
+        if chat_id:
+            query += " AND chat_id = ?"
+            params.append(chat_id)
+        query += " ORDER BY date DESC"
         with get_db_cursor() as cursor:
-            cursor.execute(
-                "SELECT * FROM transactions WHERE date = ? ORDER BY date DESC",
-                (date,),
-            )
+            cursor.execute(query, params)
             rows = cursor.fetchall()
     elif period == "week":
         # Current week (Monday to Sunday)
         start = now - timedelta(days=now.weekday())
         end = start + timedelta(days=6)
+        query = "SELECT * FROM transactions WHERE date BETWEEN ? AND ?"
+        params = [start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")]
+        if chat_id:
+            query += " AND chat_id = ?"
+            params.append(chat_id)
+        query += " ORDER BY date DESC"
         with get_db_cursor() as cursor:
-            cursor.execute(
-                "SELECT * FROM transactions WHERE date BETWEEN ? AND ? ORDER BY date DESC",
-                (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")),
-            )
+            cursor.execute(query, params)
             rows = cursor.fetchall()
     elif period == "month":
+        query = """SELECT * FROM transactions 
+                   WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?"""
+        params = [str(year), f"{month:02d}"]
+        if chat_id:
+            query += " AND chat_id = ?"
+            params.append(chat_id)
+        query += " ORDER BY date DESC"
         with get_db_cursor() as cursor:
-            cursor.execute(
-                """SELECT * FROM transactions 
-                   WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?
-                   ORDER BY date DESC""",
-                (str(year), f"{month:02d}"),
-            )
+            cursor.execute(query, params)
             rows = cursor.fetchall()
     elif period == "year":
+        query = "SELECT * FROM transactions WHERE strftime('%Y', date) = ?"
+        params = [str(year)]
+        if chat_id:
+            query += " AND chat_id = ?"
+            params.append(chat_id)
+        query += " ORDER BY date DESC"
         with get_db_cursor() as cursor:
-            cursor.execute(
-                "SELECT * FROM transactions WHERE strftime('%Y', date) = ? ORDER BY date DESC",
-                (str(year),),
-            )
+            cursor.execute(query, params)
             rows = cursor.fetchall()
     else:
         return []
@@ -94,6 +105,7 @@ def get_transactions_by_period(period: str, year: int = None, month: int = None)
             category=row[5], payment_method=row[6], description=row[7],
             source_type=row[8], confidence=row[9], needs_review=bool(row[10]),
             source_hash=row[11] if len(row) > 11 else None,
+            chat_id=row[12] if len(row) > 12 else None,
         )
         for row in rows
     ]

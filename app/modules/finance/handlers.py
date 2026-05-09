@@ -7,6 +7,7 @@ from pathlib import Path
 from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app.config import settings
 from app.modules.finance.ocr import (
     image_to_text_async,
     pdf_to_text_async,
@@ -346,6 +347,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         for tx_data in transactions:
+            chat_id = tx_data.chat_id
             transaction = Transaction(
                 date=tx_data.date,
                 merchant=tx_data.merchant,
@@ -357,6 +359,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 source_type=tx_data.source_type,
                 confidence=tx_data.confidence,
                 needs_review=tx_data.needs_review,
+                chat_id=chat_id,
             )
             add_transaction(transaction, tx_data.description or "")
 
@@ -395,7 +398,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    # Handle save after edit
     if action == "editsave":
         tx_data = context.user_data.get("pending_tx")
         if not tx_data:
@@ -434,6 +436,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 source_type=tx_data.source_type,
                 confidence=tx_data.confidence,
                 needs_review=tx_data.needs_review,
+                chat_id=tx_data.chat_id,
             )
 
             add_transaction(transaction, tx_data.description or "")
@@ -466,6 +469,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             source_type=tx_data.source_type,
             confidence=tx_data.confidence,
             needs_review=tx_data.needs_review,
+            chat_id=tx_data.chat_id,
         )
 
         add_transaction(transaction, tx_data.description or "")
@@ -532,6 +536,9 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text.strip()
     parts = text.split()
 
+    # Get chat_id for isolation
+    chat_id = update.effective_chat.id if update.effective_chat else None
+
     # Default to all transactions
     period = "all"
     year = datetime.now().year
@@ -555,10 +562,11 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         if period == "all":
-            path, count = settings.excel_path, len(get_transactions())
+            path = settings.excel_path
             export_to_excel()
+            count = len(get_transactions())
         else:
-            path, count = export_period_to_excel(period, year, month)
+            path, count = export_period_to_excel(period, year, month, chat_id)
 
         # Send file via Telegram
         from pathlib import Path
