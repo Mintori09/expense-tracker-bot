@@ -48,7 +48,7 @@ class ExtractedTransaction(BaseModel):
     amount: float = Field(gt=0)
     currency: str = "VND"
     category: str = "Other"
-    payment_method: str = "Unknown"
+    payment_method: str = "Chuyển khoản"
     description: str = ""
     source_type: str = "text"
     confidence: float = Field(ge=0, le=1, default=0.9)
@@ -238,7 +238,7 @@ Rules:
                     amount=float(item.get("amount", 0)),
                     currency=item.get("currency", "VND"),
                     category=item.get("category", "Other"),
-                    payment_method=item.get("payment_method", "Unknown"),
+                    payment_method=item.get("payment_method", "Chuyển khoản"),
                     description=item.get("description", ""),
                     source_type=source_type,
                     confidence=0.9,
@@ -317,7 +317,7 @@ async def extract_transaction(
             amount=amount,
             currency=data.get("currency", "VND"),
             category=data.get("category", "Other"),
-            payment_method=data.get("payment_method", "Unknown"),
+            payment_method=data.get("payment_method", "Chuyển khoản"),
             description=data.get("description", ""),
             source_type=source_type,
             confidence=confidence,
@@ -401,7 +401,7 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
             amount=amount,
             currency="VND",
             category=category,
-            payment_method="Unknown",
+            payment_method="Chuyển khoản",
             description=text[:50],
             source_type="text",
             confidence=0.7,
@@ -462,7 +462,7 @@ def extract_multiple_fallback(text: str) -> list[ExtractedTransaction]:
                 amount=amount,
                 currency="VND",
                 category="Other",
-                payment_method="Unknown",
+                payment_method="Chuyển khoản",
                 description=item_text[:50],
                 source_type="text",
                 confidence=0.7,

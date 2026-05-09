@@ -14,7 +14,7 @@ class Expense:
     amount: float
     currency: str = "VND"
     category: str = "Other"
-    payment_method: str = "Unknown"
+    payment_method: str = "Chuyển khoản"
     description: str = ""
     source_type: str = "text"
     confidence: float = 1.0

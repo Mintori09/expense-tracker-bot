@@ -40,8 +40,12 @@ async def process_expense_text(
 
     # Get user_id for data isolation
     user_id = update.effective_user.id if update.effective_user else None
+    
+    # Get user language
+    from app.core.database import get_user_language
+    lang = get_user_language(user_id) if user_id else "en"
 
-    logger.info("Processing expense text: %r from %s (user_id: %s)", text, source_type, user_id)
+    logger.info("Processing expense text: %r from %s (user_id: %s, lang: %s)", text, source_type, user_id, lang)
 
     try:
         # Try multi-transaction extraction first (for invoices with multiple items)
@@ -87,7 +91,7 @@ async def process_expense_text(
             extracted.confidence,
         )
 
-        await _confirm_and_store(update, context, extracted, user_id)
+        await _confirm_and_store(update, context, extracted, user_id, lang)
 
     except ExtractionError as e:
         logger.warning("LLM extraction failed: %s, trying fallback", e)
@@ -128,15 +132,17 @@ async def process_expense_text(
 
         if fallback:
             fallback.user_id = user_id
-            await _confirm_and_store(update, context, fallback, user_id)
+            await _confirm_and_store(update, context, fallback, user_id, lang)
         else:
+            from app.i18n import get_message
             await update.message.reply_text(
-                _handle_error(ExtractionError("Could not extract"))
+                get_message("error_extraction", lang)
             )
 
     except Exception as e:
         logger.exception("Unexpected error processing text")
-        await update.message.reply_text(_handle_error(e, "Processing error"))
+        from app.i18n import get_message
+        await update.message.reply_text(get_message("error_extraction", lang))
 
 
 async def _confirm_and_store(
@@ -144,6 +150,7 @@ async def _confirm_and_store(
     context: ContextTypes.DEFAULT_TYPE,
     tx: ExtractedTransaction,
     user_id: int = None,
+    lang: str = "en",
 ) -> None:
     """Confirm transaction with user and store if approved."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup

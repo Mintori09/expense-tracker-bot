@@ -24,7 +24,7 @@ class Transaction:
     amount: float
     currency: str
     category: str
-    payment_method: str = "Unknown"
+    payment_method: str = "Chuyển khoản"
     description: str = ""
     source_type: str = "text"
     confidence: float = 1.0
@@ -65,6 +65,14 @@ def init_schema() -> None:
             needs_review INTEGER,
             source_hash TEXT UNIQUE,
             user_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER PRIMARY KEY,
+            language TEXT DEFAULT 'en',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -452,3 +460,27 @@ def get_current_balance() -> float:
     expenses = row[1]
     
     return initial + income - expenses
+
+
+def get_user_language(user_id: int) -> str:
+    """Get user's preferred language."""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            "SELECT language FROM user_preferences WHERE user_id = ?",
+            (user_id,),
+        )
+        row = cursor.fetchone()
+    return row[0] if row else "en"
+
+
+def set_user_language(user_id: int, language: str) -> None:
+    """Set user's preferred language."""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO user_preferences (user_id, language, updated_at)
+            VALUES (?, ?, ?)
+        """,
+            (user_id, language, datetime.now().isoformat()),
+        )
+    logger.info(f"Set language for user {user_id}: {language}")

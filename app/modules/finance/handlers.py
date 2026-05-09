@@ -752,6 +752,39 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
+async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Change user language preference."""
+    if not update.message:
+        return
+
+    user_id = update.effective_user.id if update.effective_user else None
+    text = update.message.text.strip()
+    parts = text.split()
+
+    if len(parts) < 2:
+        from app.core.database import get_user_language
+        current_lang = get_user_language(user_id) if user_id else "en"
+        msg = "*Current language:* " + ("🇻🇳 Vietnamese" if current_lang == "vi" else "🇺🇸 English")
+        msg += "\n\nUsage: `/language en` or `/language vi`"
+        await update.message.reply_text(msg, parse_mode="Markdown")
+        return
+
+    lang = parts[1].lower()
+    if lang not in ("en", "vi"):
+        await update.message.reply_text(
+            "*Invalid language. Use:* `/language en` *or* `/language vi`",
+            parse_mode="Markdown",
+        )
+        return
+
+    from app.core.database import set_user_language
+    if user_id:
+        set_user_language(user_id, lang)
+
+    msg = "🌐 *Language set to:* " + ("🇻🇳 Vietnamese" if lang == "vi" else "🇺🇸 English")
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
 async def get_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Get the current chat ID."""
     if not update.message:
@@ -788,6 +821,7 @@ def register_finance_handlers(application) -> None:
     application.add_handler(CommandHandler("getId", get_id_command))
     application.add_handler(CommandHandler("current", current_command))
     application.add_handler(CommandHandler("setbalance", setbalance_command))
+    application.add_handler(CommandHandler("language", language_command))
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
