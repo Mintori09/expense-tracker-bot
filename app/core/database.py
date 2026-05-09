@@ -77,6 +77,14 @@ def init_schema() -> None:
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS balance (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            amount REAL NOT NULL DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
     logger.info("Database schema initialized")
@@ -403,3 +411,44 @@ def update_transaction(tx_id: int, tx: Transaction) -> bool:
             ),
         )
         return cursor.rowcount > 0
+
+
+def get_initial_balance() -> float:
+    """Get the initial balance set by user."""
+    with get_db_cursor() as cursor:
+        cursor.execute("SELECT amount FROM balance WHERE id = 1")
+        row = cursor.fetchone()
+    return row[0] if row else 0.0
+
+
+def set_initial_balance(amount: float) -> None:
+    """Set the initial balance."""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO balance (id, amount, updated_at)
+            VALUES (1, ?, ?)
+        """,
+            (amount, datetime.now().isoformat()),
+        )
+    logger.info(f"Set initial balance: {amount}")
+
+
+def get_current_balance() -> float:
+    """Calculate current balance based on initial balance + income - expenses."""
+    initial = get_initial_balance()
+    
+    with get_db_cursor() as cursor:
+        # Sum all transactions: Income adds, expenses subtract
+        cursor.execute("""
+            SELECT 
+                COALESCE(SUM(CASE WHEN category = 'Income' THEN amount ELSE 0 END), 0) as income,
+                COALESCE(SUM(CASE WHEN category != 'Income' THEN amount ELSE 0 END), 0) as expenses
+            FROM transactions
+        """)
+        row = cursor.fetchone()
+    
+    income = row[0]
+    expenses = row[1]
+    
+    return initial + income - expenses

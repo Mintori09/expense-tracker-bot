@@ -12,6 +12,9 @@ from app.core.database import (
     delete_transaction,
     update_transaction,
     init_schema as init_db_schema,
+    get_current_balance,
+    get_initial_balance,
+    set_initial_balance,
 )
 
 __all__ = [
@@ -26,4 +29,7 @@ __all__ = [
     "delete_transaction",
     "update_transaction",
     "init_db_schema",
+    "get_current_balance",
+    "get_initial_balance",
+    "set_initial_balance",
 ]

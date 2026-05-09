@@ -23,6 +23,9 @@ from app.modules.finance.repository import (
     get_transaction,
     get_transactions,
     update_transaction,
+    get_current_balance,
+    get_initial_balance,
+    set_initial_balance,
 )
 from app.modules.finance.service import process_expense_text
 from app.modules.finance.storage import export_to_excel, export_period_to_excel
@@ -66,6 +69,8 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "*Commands:*\n"
         "/month - Show monthly spending\n"
         "/today - Show today's expenses\n"
+        "/current - Show current balance\n"
+        "/setbalance - Set initial balance\n"
         "/export - Export all to Excel\n"
         "/export today|week|month|year - Export by period\n"
         "/review - Show transactions needing review\n"
@@ -635,6 +640,63 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
+async def current_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show current balance."""
+    if not update.message:
+        return
+
+    current_balance = get_current_balance()
+    initial_balance = get_initial_balance()
+    
+    # Get income and expenses for breakdown
+    from app.core.database import get_db_cursor
+    with get_db_cursor() as cursor:
+        cursor.execute("""
+            SELECT 
+                COALESCE(SUM(CASE WHEN category = 'Income' THEN amount ELSE 0 END), 0) as income,
+                COALESCE(SUM(CASE WHEN category != 'Income' THEN amount ELSE 0 END), 0) as expenses
+            FROM transactions
+        """)
+        row = cursor.fetchone()
+    
+    income = row[0]
+    expenses = row[1]
+    
+    msg = f"*Current Balance:* {current_balance:,.0f} VND\n\n"
+    msg += "*Breakdown:*\n"
+    msg += f"  • Initial: {initial_balance:,.0f} VND\n"
+    msg += f"  • Income: +{income:,.0f} VND\n"
+    msg += f"  • Expenses: -{expenses:,.0f} VND\n"
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def setbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set initial balance."""
+    if not update.message:
+        return
+
+    text = update.message.text.strip()
+    parts = text.split()
+    
+    if len(parts) < 2:
+        current = get_initial_balance()
+        msg = f"*Current initial balance:* {current:,.0f} VND\n\n"
+        msg += "Usage: `/setbalance <amount>`"
+        await update.message.reply_text(msg, parse_mode="Markdown")
+        return
+    
+    try:
+        amount = float(parts[1].replace(",", ""))
+        set_initial_balance(amount)
+        await update.message.reply_text(
+            f"*Initial balance set to:* {amount:,.0f} VND",
+            parse_mode="Markdown",
+        )
+    except ValueError:
+        await update.message.reply_text("*Invalid amount.*")
+
+
 async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove one or more transactions by ID."""
     if not update.message:
@@ -724,6 +786,8 @@ def register_finance_handlers(application) -> None:
     application.add_handler(CommandHandler("today", today_command))
     application.add_handler(CommandHandler("remove", remove_command))
     application.add_handler(CommandHandler("getId", get_id_command))
+    application.add_handler(CommandHandler("current", current_command))
+    application.add_handler(CommandHandler("setbalance", setbalance_command))
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)

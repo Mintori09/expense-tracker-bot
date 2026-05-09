@@ -1,5 +1,6 @@
 """Tests for Vietnamese date parsing utilities."""
 
+import calendar
 import pytest
 from datetime import datetime, timedelta
 
@@ -74,6 +75,44 @@ class TestParseVietnameseDate:
         # Test mixed case
         result = parse_vietnamese_date("Ăn trưa HôM QuA 85k")
         assert result == expected
+    
+    def test_ngay_nay_thang_truoc(self):
+        """Test parsing 'ngày này tháng trước' (same day of last month)."""
+        today = datetime.now()
+        year = today.year
+        month = today.month - 1
+        if month == 0:
+            month = 12
+            year -= 1
+        
+        # Calculate expected date
+        day = min(today.day, calendar.monthrange(year, month)[1])
+        expected = datetime(year, month, day).strftime("%Y-%m-%d")
+        
+        result = parse_vietnamese_date("Ăn trưa ngày này tháng trước 85k")
+        assert result == expected
+    
+    def test_ngay_nay_tuan_truoc(self):
+        """Test parsing 'ngày này tuần trước' (same weekday of last week)."""
+        today = datetime.now()
+        target = today - timedelta(weeks=1)
+        expected = target.strftime("%Y-%m-%d")
+        
+        result = parse_vietnamese_date("Coffee ngày này tuần trước 55k")
+        assert result == expected
+    
+    def test_ngay_nay_nam_truoc(self):
+        """Test parsing 'ngày này năm trước' (same day of last year)."""
+        today = datetime.now()
+        
+        # Handle Feb 29 case
+        try:
+            expected = datetime(today.year - 1, today.month, today.day).strftime("%Y-%m-%d")
+        except ValueError:
+            expected = datetime(today.year - 1, today.month, today.day - 1).strftime("%Y-%m-%d")
+        
+        result = parse_vietnamese_date("Ăn tối ngày này năm trước 120k")
+        assert result == expected
 
 
 class TestResolveRelativeDates:
@@ -108,6 +147,50 @@ class TestResolveRelativeDates:
         
         assert date_str is None
         assert text == "Ăn trưa 85k ở Phở Thìn"
+
+
+class TestResolveRelativeDatesComplex:
+    """Tests for resolve_relative_dates with complex patterns."""
+    
+    def test_resolve_ngay_nay_thang_truoc(self):
+        """Test resolving 'ngày này tháng trước' in text."""
+        today = datetime.now()
+        
+        year = today.year
+        month = today.month - 1
+        if month == 0:
+            month = 12
+            year -= 1
+        day = min(today.day, calendar.monthrange(year, month)[1])
+        expected_date = datetime(year, month, day).strftime("%Y-%m-%d")
+        
+        text, date_str = resolve_relative_dates("Ăn trưa ngày này tháng trước 85k")
+        
+        assert date_str == expected_date
+        assert expected_date in text
+    
+    def test_resolve_ngay_nay_tuan_truoc(self):
+        """Test resolving 'ngày này tuần trước' in text."""
+        today = datetime.now()
+        expected_date = (today - timedelta(weeks=1)).strftime("%Y-%m-%d")
+        
+        text, date_str = resolve_relative_dates("Coffee ngày này tuần trước 55k")
+        
+        assert date_str == expected_date
+        assert expected_date in text
+    
+    def test_resolve_ngay_nay_nam_truoc(self):
+        """Test resolving 'ngày này năm trước' in text."""
+        today = datetime.now()
+        try:
+            expected_date = datetime(today.year - 1, today.month, today.day).strftime("%Y-%m-%d")
+        except ValueError:
+            expected_date = datetime(today.year - 1, today.month, today.day - 1).strftime("%Y-%m-%d")
+        
+        text, date_str = resolve_relative_dates("Ăn tối ngày này năm trước 120k")
+        
+        assert date_str == expected_date
+        assert expected_date in text
 
 
 class TestExtractDateFromText:

@@ -379,7 +379,7 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
     if amount and amount > 0:
         # Clean up merchant name - remove common prefixes (Vietnamese verbs/phrases and date expressions)
         merchant = re.sub(
-            r"\b(ăn|mua|chi|pay|paid|spent|giao\s?dịch|sáng|trưa|chiều|đêm|tối|cà\s?phê|internet|hôm qua|hôm kia|ngày mai|mống mai|hôm nay|nay)\b\s*",
+            r"\b(ăn|mua|chi|pay|paid|spent|giao\s?dịch|sáng|trưa|chiều|đêm|tối|cà\s?phê|internet|hôm qua|hôm kia|ngày mai|mống mai|hôm nay|nay|ngày này tháng trước|ngày này tuần trước|ngày này năm trước)\b\s*",
             "",
             merchant,
             flags=re.IGNORECASE,
