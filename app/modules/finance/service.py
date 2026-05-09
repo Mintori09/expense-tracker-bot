@@ -43,7 +43,7 @@ async def process_expense_text(
     
     # Get user language
     from app.core.database import get_user_language
-    lang = get_user_language(user_id) if user_id else "en"
+    lang = get_user_language(user_id) if user_id else "vi"
 
     logger.info("Processing expense text: %r from %s (user_id: %s, lang: %s)", text, source_type, user_id, lang)
 
@@ -150,7 +150,7 @@ async def _confirm_and_store(
     context: ContextTypes.DEFAULT_TYPE,
     tx: ExtractedTransaction,
     user_id: int = None,
-    lang: str = "en",
+    lang: str = "vi",
 ) -> None:
     """Confirm transaction with user and store if approved."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup

@@ -763,9 +763,10 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if len(parts) < 2:
         from app.core.database import get_user_language
-        current_lang = get_user_language(user_id) if user_id else "en"
-        msg = "*Current language:* " + ("🇻🇳 Vietnamese" if current_lang == "vi" else "🇺🇸 English")
-        msg += "\n\nUsage: `/language en` or `/language vi`"
+        from app.i18n import get_message
+        current_lang = get_user_language(user_id) if user_id else "vi"
+        msg = f"{get_message('language_set', current_lang)}{'🇻🇳 Vietnamese' if current_lang == 'vi' else '🇺🇸 English'}\n\n"
+        msg += "Usage: `/language en` or `/language vi`"
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
@@ -778,10 +779,11 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     from app.core.database import set_user_language
+    from app.i18n import get_message
     if user_id:
         set_user_language(user_id, lang)
 
-    msg = "🌐 *Language set to:* " + ("🇻🇳 Vietnamese" if lang == "vi" else "🇺🇸 English")
+    msg = f"{get_message('language_set', lang)}{'🇻🇳 Vietnamese' if lang == 'vi' else '🇺🇸 English'}"
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 

@@ -72,7 +72,7 @@ def init_schema() -> None:
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_preferences (
             user_id INTEGER PRIMARY KEY,
-            language TEXT DEFAULT 'en',
+            language TEXT DEFAULT 'vi',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -470,7 +470,7 @@ def get_user_language(user_id: int) -> str:
             (user_id,),
         )
         row = cursor.fetchone()
-    return row[0] if row else "en"
+    return row[0] if row else "vi"
 
 
 def set_user_language(user_id: int, language: str) -> None:
