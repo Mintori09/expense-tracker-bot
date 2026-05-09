@@ -5,7 +5,7 @@ DEFAULT_CURRENCY = "VND"
 # Default categories for finance module
 DEFAULT_CATEGORIES = [
     "Food",
-    "Coffee", 
+    "Coffee",
     "Groceries",
     "Transport",
     "Rent",
@@ -19,3 +19,4 @@ DEFAULT_CATEGORIES = [
     "Income",
     "Other",
 ]
+

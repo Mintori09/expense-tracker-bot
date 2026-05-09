@@ -40,6 +40,11 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     user = update.effective_user
+    user_id = update.effective_user.id if update.effective_user else None
+    
+    from app.core.database import get_user_language
+    from app.i18n import get_message
+    lang = get_user_language(user_id) if user_id else "vi"
 
     await update.message.reply_html(
         rf"Hi {user.first_name if user else 'there'}! I'm your finance automation bot.\n\n"
@@ -59,27 +64,49 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not update.message:
         return
 
-    await update.message.reply_text(
-        "*How to use:*\n\n"
-        "*Text:* Send expense text like:\n"
-        '• "Ăn trưa 85k ở Phở Thìn"\n'
-        '• "cà phê 55k tại The Coffee House"\n\n'
-        "*Image:* Send receipt photo\n"
-        "*PDF:* Send invoice document\n\n"
-        "*Commands:*\n"
-        "/month - Show monthly spending\n"
-        "/today - Show today's expenses\n"
-        "/current - Show current balance\n"
-        "/setbalance - Set initial balance\n"
-        "/export - Export all to Excel\n"
-        "/export today|week|month|year - Export by period\n"
-        "/review - Show transactions needing review\n"
-        "/edit - Edit pending transaction\n"
-        "/remove <id> - Remove a transaction\n"
-        "/getId - Get current chat ID\n\n"
-        "*Edit:* After confirming, use inline buttons to edit fields.",
-        parse_mode="Markdown",
-    )
+    user_id = update.effective_user.id if update.effective_user else None
+    
+    from app.core.database import get_user_language
+    from app.i18n import get_message
+    lang = get_user_language(user_id) if user_id else "vi"
+    
+    # Vietnamese help
+    if lang == "vi":
+        msg = """*Lệnh Bot Tài Chính*
+
+/add - Thêm chi tiêu mới (ví dụ: "30k đánh cầu sân win win")
+/list - Xem giao dịch gần đây
+/export - Xuất Excel (cách dùng: /export [today|week|month|year])
+/stats - Thống kê chi tiêu hàng tháng
+/review - Xem giao dịch cần kiểm tra
+/language - Đổi ngôn ngữ (/language en|vi)
+/getId - Lấy Chat ID và User ID
+/month - Thống kê chi tiêu tháng
+/today - Chi tiêu hôm nay
+/current - Số dư hiện tại
+/setbalance - Đặt số dư đầu kỳ
+/remove <id> - Xóa giao dịch
+
+💡 Mẹo: Gửi trực tiếp nội dung chi tiêu như "30k đánh cầu" để thêm ngay!"""
+    else:
+        msg = """*Finance Bot Commands*
+
+/add - Add new expense (e.g., "30k đánh cầu sân win win")
+/list - Show recent transactions
+/export - Export to Excel (usage: /export [today|week|month|year])
+/stats - Monthly spending summary
+/review - Review transactions needing attention
+/language - Change language (/language en|vi)
+/getId - Get Chat ID and User ID
+/month - Monthly spending summary
+/today - Today's expenses
+/current - Current balance
+/setbalance - Set initial balance
+/remove <id> - Remove transaction
+
+💡 Tip: Just send any expense text like "30k đánh cầu" to add directly!"""
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -99,15 +126,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = update.message.text.strip()
 
     if not text:
-        await update.message.reply_text("Please send some expense text.")
+        user_id = update.effective_user.id if update.effective_user else None
+        from app.core.database import get_user_language
+        lang = get_user_language(user_id) if user_id else "vi"
+        await update.message.reply_text("Vui lòng gửi nội dung chi tiêu." if lang == "vi" else "Please send some expense text.")
         return
 
     # Check if we're in edit mode (waiting for field value)
     editing_field = context.user_data.pop("editing_field", None)
     if editing_field:
         tx_data = context.user_data.get("pending_tx")
+        user_id = update.effective_user.id if update.effective_user else None
+        from app.core.database import get_user_language
+        lang = get_user_language(user_id) if user_id else "vi"
         if not tx_data:
-            await update.message.reply_text("*No pending transaction found.*")
+            await update.message.reply_text("*Không tìm thấy giao dịch.*")
             return
 
         try:
@@ -513,22 +546,42 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
 
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+    from app.i18n import get_message
+    lang = get_user_language(user_id) if user_id else "vi"
+
     now = datetime.now()
     summary = get_monthly_summary(now.year, now.month)
 
-    msg = f"*Monthly Summary - {now.strftime('%B %Y')}*\n\n"
-    msg += f"Total spent: {summary['total_spent']:,.0f} VND\n\n"
+    if lang == "vi":
+        msg = f"*Thống kê chi tiêu tháng {now.strftime('%B %Y')}*\n\n"
+        msg += f"Tổng chi tiêu: {summary['total_spent']:,.0f} VND\n\n"
 
-    if summary["categories"]:
-        msg += "*By category:*\n"
+        if summary["categories"]:
+            msg += "*Theo danh mục:*\n"
 
-        for cat, amount in sorted(
-            summary["categories"].items(),
-            key=lambda item: -item[1],
-        ):
-            msg += f"  * {cat}: {amount:,.0f} VND\n"
+            for cat, amount in sorted(
+                summary["categories"].items(),
+                key=lambda item: -item[1],
+            ):
+                msg += f"  * {cat}: {amount:,.0f} VND\n"
+        else:
+            msg += "Chưa có chi tiêu tháng này."
     else:
-        msg += "No expenses this month yet."
+        msg = f"*Monthly Summary - {now.strftime('%B %Y')}*\n\n"
+        msg += f"Total spent: {summary['total_spent']:,.0f} VND\n\n"
+
+        if summary["categories"]:
+            msg += "*By category:*\n"
+
+            for cat, amount in sorted(
+                summary["categories"].items(),
+                key=lambda item: -item[1],
+            ):
+                msg += f"  * {cat}: {amount:,.0f} VND\n"
+        else:
+            msg += "No expenses this month yet."
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -601,21 +654,36 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.message:
         return
 
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+    from app.i18n import get_message
+    lang = get_user_language(user_id) if user_id else "vi"
+
     txs = get_needs_review_transactions()
 
     if not txs:
-        await update.message.reply_text("*No transactions need review.*")
+        msg = "*Không có giao dịch nào cần kiểm tra.*" if lang == "vi" else "*No transactions need review.*"
+        await update.message.reply_text(msg)
         return
 
-    msg = f"*Transactions needing review: {len(txs)}*\n\n"
-
-    for tx in txs[:10]:
-        msg += (
-            f"  * `{tx.id}` {tx.date} - "
-            f"{tx.amount:,.0f} VND - "
-            f"{tx.merchant or 'Unknown'} "
-            f"({tx.confidence * 100:.0f}%)\n"
-        )
+    if lang == "vi":
+        msg = f"*Các giao dịch cần kiểm tra: {len(txs)}*\n\n"
+        for tx in txs[:10]:
+            msg += (
+                f"  * `{tx.id}` {tx.date} - "
+                f"{tx.amount:,.0f} VND - "
+                f"{tx.merchant or 'Không rõ'} "
+                f"({tx.confidence * 100:.0f}%)\n"
+            )
+    else:
+        msg = f"*Transactions needing review: {len(txs)}*\n\n"
+        for tx in txs[:10]:
+            msg += (
+                f"  * `{tx.id}` {tx.date} - "
+                f"{tx.amount:,.0f} VND - "
+                f"{tx.merchant or 'Unknown'} "
+                f"({tx.confidence * 100:.0f}%)\n"
+            )
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -625,17 +693,30 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
 
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+    from app.i18n import get_message
+    lang = get_user_language(user_id) if user_id else "vi"
+
     txs = get_today_transactions()
 
     if not txs:
-        await update.message.reply_text("*No expenses today.*")
+        msg = "*Hôm nay chưa có chi tiêu.*" if lang == "vi" else "*No expenses today.*"
+        await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
     total = sum(tx.amount for tx in txs)
-    msg = f"*Today's expenses:* {total:,.0f} VND\n\n"
+    
+    if lang == "vi":
+        msg = f"*Chi tiêu hôm nay:* {total:,.0f} VND\n\n"
 
-    for tx in txs:
-        msg += f"• {tx.date} - {tx.amount:,.0f} VND - {tx.description or 'Unknown'} - {tx.merchant or ''} ({tx.category})\n"
+        for tx in txs:
+            msg += f"• {tx.date} - {tx.amount:,.0f} VND - {tx.description or 'Không rõ'} - {tx.merchant or ''} ({tx.category})\n"
+    else:
+        msg = f"*Today's expenses:* {total:,.0f} VND\n\n"
+
+        for tx in txs:
+            msg += f"• {tx.date} - {tx.amount:,.0f} VND - {tx.description or 'Unknown'} - {tx.merchant or ''} ({tx.category})\n"
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -644,6 +725,11 @@ async def current_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Show current balance."""
     if not update.message:
         return
+
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+    from app.i18n import get_message
+    lang = get_user_language(user_id) if user_id else "vi"
 
     current_balance = get_current_balance()
     initial_balance = get_initial_balance()
@@ -662,11 +748,18 @@ async def current_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     income = row[0]
     expenses = row[1]
     
-    msg = f"*Current Balance:* {current_balance:,.0f} VND\n\n"
-    msg += "*Breakdown:*\n"
-    msg += f"  • Initial: {initial_balance:,.0f} VND\n"
-    msg += f"  • Income: +{income:,.0f} VND\n"
-    msg += f"  • Expenses: -{expenses:,.0f} VND\n"
+    if lang == "vi":
+        msg = f"*Số dư hiện tại:* {current_balance:,.0f} VND\n\n"
+        msg += "*Chi tiết:*\n"
+        msg += f"  • Đầu kỳ: {initial_balance:,.0f} VND\n"
+        msg += f"  • Thu nhập: +{income:,.0f} VND\n"
+        msg += f"  • Chi tiêu: -{expenses:,.0f} VND\n"
+    else:
+        msg = f"*Current Balance:* {current_balance:,.0f} VND\n\n"
+        msg += "*Breakdown:*\n"
+        msg += f"  • Initial: {initial_balance:,.0f} VND\n"
+        msg += f"  • Income: +{income:,.0f} VND\n"
+        msg += f"  • Expenses: -{expenses:,.0f} VND\n"
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -676,31 +769,51 @@ async def setbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not update.message:
         return
 
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+    from app.i18n import get_message
+    lang = get_user_language(user_id) if user_id else "vi"
+
     text = update.message.text.strip()
     parts = text.split()
     
     if len(parts) < 2:
         current = get_initial_balance()
-        msg = f"*Current initial balance:* {current:,.0f} VND\n\n"
-        msg += "Usage: `/setbalance <amount>`"
+        if lang == "vi":
+            msg = f"*Số dư đầu kỳ hiện tại:* {current:,.0f} VND\n\n"
+            msg += "Cách dùng: `/setbalance <số tiền>`"
+        else:
+            msg = f"*Current initial balance:* {current:,.0f} VND\n\n"
+            msg += "Usage: `/setbalance <amount>`"
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
     
     try:
         amount = float(parts[1].replace(",", ""))
         set_initial_balance(amount)
-        await update.message.reply_text(
-            f"*Initial balance set to:* {amount:,.0f} VND",
-            parse_mode="Markdown",
-        )
+        if lang == "vi":
+            await update.message.reply_text(
+                f"*Đã đặt số dư đầu kỳ:* {amount:,.0f} VND",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                f"*Initial balance set to:* {amount:,.0f} VND",
+                parse_mode="Markdown",
+            )
     except ValueError:
-        await update.message.reply_text("*Invalid amount.*")
+        msg = "*Số tiền không hợp lệ.*" if lang == "vi" else "*Invalid amount.*"
+        await update.message.reply_text(msg)
 
 
 async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Remove one or more transactions by ID."""
     if not update.message:
         return
+
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+    lang = get_user_language(user_id) if user_id else "vi"
 
     text = update.message.text.strip()
     parts = text.split()
@@ -710,12 +823,18 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         recent_txs = get_transactions(10)
 
         if not recent_txs:
-            await update.message.reply_text("*No transactions to remove.*")
+            msg = "*Không có giao dịch nào để xóa.*" if lang == "vi" else "*No transactions to remove.*"
+            await update.message.reply_text(msg)
             return
 
-        msg = "*Recent transactions (use /remove <id> [id2] [id3]):*\n\n"
-        for tx in recent_txs[:5]:
-            msg += f"• `{tx.id}` {tx.date} - {tx.amount:,.0f} VND - {tx.merchant or 'Unknown'}\n"
+        if lang == "vi":
+            msg = "*Các giao dịch gần đây (dùng /remove <id> [id2] [id3]):*\n\n"
+            for tx in recent_txs[:5]:
+                msg += f"• `{tx.id}` {tx.date} - {tx.amount:,.0f} VND - {tx.merchant or 'Không rõ'}\n"
+        else:
+            msg = "*Recent transactions (use /remove <id> [id2] [id3]):*\n\n"
+            for tx in recent_txs[:5]:
+                msg += f"• `{tx.id}` {tx.date} - {tx.amount:,.0f} VND - {tx.merchant or 'Unknown'}\n"
 
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
@@ -740,14 +859,19 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Send result
     if deleted:
-        msg = f"*Deleted {len(deleted)} transaction(s):*\n"
-        for tx_id, tx in deleted:
-            msg += f"• `{tx_id}` - {tx.amount:,.0f} VND - {tx.merchant or 'Unknown'}\n"
+        if lang == "vi":
+            msg = f"*Đã xóa {len(deleted)} giao dịch:*\n"
+            for tx_id, tx in deleted:
+                msg += f"• `{tx_id}` - {tx.amount:,.0f} VND - {tx.merchant or 'Không rõ'}\n"
+        else:
+            msg = f"*Deleted {len(deleted)} transaction(s):*\n"
+            for tx_id, tx in deleted:
+                msg += f"• `{tx_id}` - {tx.amount:,.0f} VND - {tx.merchant or 'Unknown'}\n"
     else:
-        msg = "*No transactions were deleted.*"
+        msg = "*Không có giao dịch nào được xóa.*" if lang == "vi" else "*No transactions were deleted.*"
 
     if not_found:
-        msg += f"\n*Not found:* {', '.join(not_found)}"
+        msg += f"\n*Không tìm thấy:* {', '.join(not_found)}" if lang == "vi" else f"\n*Not found:* {', '.join(not_found)}"
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 

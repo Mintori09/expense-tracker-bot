@@ -1,7 +1,6 @@
 """Finance module data models."""
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Optional
 
 
@@ -39,3 +38,4 @@ class FinanceSummary:
 
 
 __all__ = ["Expense", "FinanceSummary"]
+

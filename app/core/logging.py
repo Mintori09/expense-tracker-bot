@@ -10,8 +10,9 @@ def setup_logging():
     """Configure application logging."""
     # Ensure logs directory exists
     import os
+
     os.makedirs("logs", exist_ok=True)
-    
+
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -21,3 +22,4 @@ def setup_logging():
         ],
     )
     return logging.getLogger(__name__)
+

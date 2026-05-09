@@ -36,3 +36,4 @@ def handle_error(error: Exception, context: Optional[str] = None) -> str:
         return f"*Invalid transaction: {str(error)}. Please check and try again.*"
     else:
         return "*An unexpected error occurred. Please try again later.*"
+

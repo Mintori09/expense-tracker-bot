@@ -2,10 +2,9 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
 
 from app.config import ensure_data_dir, settings
-from app.core.database import Transaction, get_transactions, get_db_cursor
+from app.core.database import Transaction, get_db_cursor, get_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +44,14 @@ def export_to_excel(transactions: list[Transaction] = None) -> str:
     return settings.excel_path
 
 
-def get_transactions_by_period(period: str, year: int = None, month: int = None, user_id: int = None) -> list[Transaction]:
+def get_transactions_by_period(
+    period: str, year: int = None, month: int = None, user_id: int = None
+) -> list[Transaction]:
     """Get transactions filtered by period (today, week, month, year) and optionally by user_id."""
     now = datetime.now()
     year = year or now.year
     month = month or now.month
-    
+
     if period == "today":
         date = now.strftime("%Y-%m-%d")
         query = "SELECT * FROM transactions WHERE date = ?"
@@ -101,9 +102,17 @@ def get_transactions_by_period(period: str, year: int = None, month: int = None,
 
     return [
         Transaction(
-            id=row[0], date=row[1], merchant=row[2], amount=row[3], currency=row[4],
-            category=row[5], payment_method=row[6], description=row[7],
-            source_type=row[8], confidence=row[9], needs_review=bool(row[10]),
+            id=row[0],
+            date=row[1],
+            merchant=row[2],
+            amount=row[3],
+            currency=row[4],
+            category=row[5],
+            payment_method=row[6],
+            description=row[7],
+            source_type=row[8],
+            confidence=row[9],
+            needs_review=bool(row[10]),
             source_hash=row[11] if len(row) > 11 else None,
             user_id=row[12] if len(row) > 12 else None,
         )
@@ -111,24 +120,36 @@ def get_transactions_by_period(period: str, year: int = None, month: int = None,
     ]
 
 
-def export_period_to_excel(period: str, year: int = None, month: int = None, user_id: int = None) -> tuple[str, int]:
+def export_period_to_excel(
+    period: str, year: int = None, month: int = None, user_id: int = None
+) -> tuple[str, int]:
     """Export transactions for a specific period to Excel.
-    
+
     Returns: (file_path, transaction_count)
     """
     ensure_data_dir()
     import pandas as pd
 
     transactions = get_transactions_by_period(period, year, month, user_id)
-    
+
     file_name = settings.excel_path.replace(".xlsx", f"_{period}.xlsx")
-    
+
     if not transactions:
         # Create empty file with headers
-        df = pd.DataFrame(columns=[
-            "Date", "Merchant", "Amount", "Currency", "Category",
-            "Payment Method", "Description", "Source", "Confidence", "Needs Review"
-        ])
+        df = pd.DataFrame(
+            columns=[
+                "Date",
+                "Merchant",
+                "Amount",
+                "Currency",
+                "Category",
+                "Payment Method",
+                "Description",
+                "Source",
+                "Confidence",
+                "Needs Review",
+            ]
+        )
         df.to_excel(file_name, index=False, engine="openpyxl")
         return file_name, 0
 
@@ -160,6 +181,7 @@ def export_monthly_summary(year: int, month: int) -> str:
     """Export monthly summary to a separate sheet in Excel."""
     ensure_data_dir()
     import pandas as pd
+
     from app.core.database import get_monthly_summary
 
     summary = get_monthly_summary(year, month)
@@ -174,6 +196,7 @@ def export_monthly_summary(year: int, month: int) -> str:
 
     # Append to existing Excel or create new
     from pathlib import Path
+
     if Path(settings.excel_path).exists():
         with pd.ExcelWriter(settings.excel_path, mode="a", engine="openpyxl") as writer:
             df.to_excel(writer, sheet_name=f"Summary_{year}_{month}", index=False)
@@ -187,3 +210,4 @@ def export_monthly_summary(year: int, month: int) -> str:
 
 
 __all__ = ["export_to_excel", "export_period_to_excel", "export_monthly_summary"]
+

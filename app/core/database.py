@@ -445,7 +445,7 @@ def set_initial_balance(amount: float) -> None:
 def get_current_balance() -> float:
     """Calculate current balance based on initial balance + income - expenses."""
     initial = get_initial_balance()
-    
+
     with get_db_cursor() as cursor:
         # Sum all transactions: Income adds, expenses subtract
         cursor.execute("""
@@ -455,10 +455,10 @@ def get_current_balance() -> float:
             FROM transactions
         """)
         row = cursor.fetchone()
-    
+
     income = row[0]
     expenses = row[1]
-    
+
     return initial + income - expenses
 
 
@@ -484,3 +484,4 @@ def set_user_language(user_id: int, language: str) -> None:
             (user_id, language, datetime.now().isoformat()),
         )
     logger.info(f"Set language for user {user_id}: {language}")
+

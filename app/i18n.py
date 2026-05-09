@@ -55,3 +55,4 @@ def get_message(key: str, lang: str = "en", **kwargs) -> str:
 
 
 __all__ = ["MESSAGES", "get_message"]
+

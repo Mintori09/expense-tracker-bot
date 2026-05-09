@@ -1,7 +1,6 @@
 """Finance module service layer - business logic."""
 
 import logging
-from datetime import datetime
 from typing import Optional
 
 from telegram import Update
@@ -33,19 +32,26 @@ async def process_expense_text(
     source_type: str = "text",
 ) -> None:
     """Process and store extracted transaction."""
-    from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
     if not update.message:
         return
 
     # Get user_id for data isolation
     user_id = update.effective_user.id if update.effective_user else None
-    
+
     # Get user language
     from app.core.database import get_user_language
+
     lang = get_user_language(user_id) if user_id else "vi"
 
-    logger.info("Processing expense text: %r from %s (user_id: %s, lang: %s)", text, source_type, user_id, lang)
+    logger.info(
+        "Processing expense text: %r from %s (user_id: %s, lang: %s)",
+        text,
+        source_type,
+        user_id,
+        lang,
+    )
 
     try:
         # Try multi-transaction extraction first (for invoices with multiple items)
@@ -135,13 +141,13 @@ async def process_expense_text(
             await _confirm_and_store(update, context, fallback, user_id, lang)
         else:
             from app.i18n import get_message
-            await update.message.reply_text(
-                get_message("error_extraction", lang)
-            )
 
-    except Exception as e:
+            await update.message.reply_text(get_message("error_extraction", lang))
+
+    except Exception:
         logger.exception("Unexpected error processing text")
         from app.i18n import get_message
+
         await update.message.reply_text(get_message("error_extraction", lang))
 
 
@@ -153,27 +159,28 @@ async def _confirm_and_store(
     lang: str = "vi",
 ) -> None:
     """Confirm transaction with user and store if approved."""
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     import uuid
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
     if not update.message:
         return
 
     duplicates = find_duplicates(tx.merchant or "", tx.amount, tx.date)
 
-    msg = "*Confirm expense:*\n\n"
-    msg += f"Date: {tx.date}\n"
-    msg += f"Description: {tx.description}\n"
-    msg += f"Merchant: {tx.merchant or 'Unknown'}\n"
-    msg += f"Amount: {tx.amount:,.0f} {tx.currency}\n"
-    msg += f"Category: {tx.category}\n"
-    msg += f"Confidence: {tx.confidence * 100:.0f}%\n"
+    msg = "*Xác nhận chi tiêu:*\n\n" if lang == "vi" else "*Confirm expense:*\n\n"
+    msg += f"Ngày: {tx.date}\n" if lang == "vi" else f"Date: {tx.date}\n"
+    msg += f"Mô tả: {tx.description}\n" if lang == "vi" else f"Description: {tx.description}\n"
+    msg += f"Cửa hàng: {tx.merchant or 'Không rõ'}\n" if lang == "vi" else f"Merchant: {tx.merchant or 'Unknown'}\n"
+    msg += f"Số tiền: {tx.amount:,.0f} {tx.currency}\n" if lang == "vi" else f"Amount: {tx.amount:,.0f} {tx.currency}\n"
+    msg += f"Danh mục: {tx.category}\n" if lang == "vi" else f"Category: {tx.category}\n"
+    msg += f"Độ tin cậy: {tx.confidence * 100:.0f}%\n" if lang == "vi" else f"Confidence: {tx.confidence * 100:.0f}%\n"
 
     if duplicates:
-        msg += "\n*Possible duplicate detected!*"
+        msg += "\n*Có thể trùng lặp!*" if lang == "vi" else "\n*Possible duplicate detected!*"
 
     if tx.needs_review or tx.confidence < 0.8:
-        msg += "\n\n*Needs your confirmation*"
+        msg += "\n\n*Cần xác nhận của bạn*" if lang == "vi" else "\n\n*Needs your confirmation*"
 
         # Generate unique pending ID
         pending_id = str(uuid.uuid4())[:8]
@@ -212,7 +219,7 @@ async def _confirm_and_store(
         add_transaction(transaction, tx.description or "")
         export_to_excel()
 
-        msg += "\n\n*Added to database!*"
+        msg += "\n\n*Đã thêm vào cơ sở dữ liệu!*" if lang == "vi" else "\n\n*Added to database!*"
 
         await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -220,7 +227,9 @@ async def _confirm_and_store(
 def _handle_error(error: Exception, context: Optional[str] = None) -> str:
     """Generate user-friendly error message."""
     from app.shared.exceptions import handle_error as shared_handle_error
+
     return shared_handle_error(error, context)
 
 
 __all__ = ["process_expense_text", "init_db_schema"]
+

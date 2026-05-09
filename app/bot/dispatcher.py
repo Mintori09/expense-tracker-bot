@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 def create_application() -> Application:
     """Create and configure the Telegram application."""
     application = Application.builder().token(settings.telegram_bot_token).build()
-    
+
     # Register module handlers
     register_finance_handlers(application)
-    
+
     return application
 
 
@@ -26,3 +26,4 @@ def run_bot() -> None:
     application = create_application()
     logger.info("Starting bot...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+

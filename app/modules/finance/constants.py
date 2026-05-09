@@ -35,3 +35,4 @@ __all__ = [
     "DEFAULT_CURRENCY",
     "DEFAULT_CATEGORIES",
 ]
+

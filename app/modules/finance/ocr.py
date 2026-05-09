@@ -34,23 +34,22 @@ def image_to_base64(image_path: str) -> str:
 
 async def image_to_text_ai(image_path: str) -> str:
     """Extract text from image using AI vision model."""
-    import json
-    
-    from app.config import get_llm_client, settings
 
-    logger.info(f"=== AI Vision API call ===")
+    from app.config import get_llm_client
+
+    logger.info("=== AI Vision API call ===")
     logger.info(f"Provider: {settings.llm_provider}, Model: {settings.llm_model}")
-    
+
     client = get_llm_client()
 
     base64_image = image_to_base64(image_path)
-    logger.info(f"Image size: {len(base64_image)/1024:.1f}KB base64")
-    
+    logger.info(f"Image size: {len(base64_image) / 1024:.1f}KB base64")
+
     prompt = """Extract all text from this receipt/invoice image. 
 Focus on: date, merchant name, items, amounts, total.
 Return as plain text that can be parsed for financial data.
 Vietnamese text should be preserved."""
-    
+
     logger.info(f"Prompt: {prompt[:50]}...")
 
     response = await client.chat.completions.create(
@@ -62,18 +61,20 @@ Vietnamese text should be preserved."""
                     {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                    }
-                ]
+                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
+                    },
+                ],
             }
         ],
         max_tokens=1000,
     )
 
     text = response.choices[0].message.content or ""
-    logger.info(f"API response ID: {response.id}, tokens: {response.usage.total_tokens}")
+    logger.info(
+        f"API response ID: {response.id}, tokens: {response.usage.total_tokens}"
+    )
     logger.info(f"=== AI Vision completed: {len(text)} chars ===")
-    
+
     return text.strip()
 
 
@@ -184,3 +185,4 @@ def preprocess_ocr_text(text: str) -> str:
         lines.append(line.strip())
 
     return "\n".join(lines)
+
