@@ -35,4 +35,3 @@ __all__ = [
     "get_initial_balance",
     "set_initial_balance",
 ]
-

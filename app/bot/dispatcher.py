@@ -46,10 +46,9 @@ async def set_bot_commands(app: Application) -> None:
 def run_bot() -> None:
     """Start the bot polling."""
     application = create_application()
-    
+
     # Set post_init callback directly
     application.post_init = set_bot_commands
-    
+
     logger.info("Starting bot...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-

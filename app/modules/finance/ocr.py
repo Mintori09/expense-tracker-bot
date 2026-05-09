@@ -185,4 +185,3 @@ def preprocess_ocr_text(text: str) -> str:
         lines.append(line.strip())
 
     return "\n".join(lines)
-

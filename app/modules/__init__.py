@@ -13,4 +13,3 @@ __all__ = [
     "image_to_text_async",
     "pdf_to_text_async",
 ]
-

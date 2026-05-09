@@ -23,4 +23,3 @@ __all__ = [
     "resolve_relative_dates",
     "extract_date_from_text",
 ]
-

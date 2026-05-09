@@ -16,17 +16,23 @@ Telegram Bot System
 ## Layer Responsibilities
 
 ### Core Layer (`app/core/`)
+
 Infrastructure components that can be used by any module:
+
 - `database.py` - SQLite connection, schema, and basic operations
 - `logging.py` - Application logging configuration
 
 ### Bot Layer (`app/bot/`)
+
 Telegram-specific interface:
+
 - `dispatcher.py` - Create Application, register handlers
 - No business logic should be here
 
 ### Module Layer (`app/modules/`)
+
 Business domain logic:
+
 - `finance/` - Expense tracking module
   - `handlers.py` - Telegram message handlers
   - `service.py` - Business logic coordination
@@ -38,7 +44,9 @@ Business domain logic:
   - `constants.py` - Module constants
 
 ### Shared Layer (`app/shared/`)
+
 Common utilities used across modules:
+
 - `constants.py` - Shared constants
 - `exceptions.py` - Common exceptions
 

@@ -15,7 +15,7 @@ def main() -> None:
     """Start the bot."""
     # Initialize database
     init_schema()
-    
+
     # Run the bot
     run_bot()
 

@@ -22,4 +22,3 @@ def setup_logging():
         ],
     )
     return logging.getLogger(__name__)
-

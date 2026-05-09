@@ -58,15 +58,15 @@ pip install -r requirements.txt
 
 ### Environment Variables
 
-| Variable             | Description                              | Default                    |
-| -------------------- | ---------------------------------------- | -------------------------- |
-| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token                  | Required                   |
-| `LLM_PROVIDER`       | LLM provider: "ollama" or "google"       | ollama                     |
-| `LLM_API_KEY`        | API key for LLM (use "ollama" for local) | ollama                     |
-| `LLM_BASE_URL`       | LLM API endpoint                         | http://localhost:11434/v1  |
-| `LLM_MODEL`          | LLM model name                           | gemma3:4b-it-qat           |
-| `SQLITE_PATH`        | SQLite database path                     | data/finance/expenses.db   |
-| `EXCEL_PATH`         | Excel export path                        | data/finance/expenses.xlsx |
+| Variable | Description | Default |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token | Required |
+| `LLM_PROVIDER` | LLM provider: "ollama" or "google" | ollama |
+| `LLM_API_KEY` | API key for LLM (use "ollama" for local) | ollama |
+| `LLM_BASE_URL` | LLM API endpoint | http://localhost:11434/v1 |
+| `LLM_MODEL` | LLM model name | gemma3:4b-it-qat |
+| `SQLITE_PATH` | SQLite database path | data/finance/expenses.db |
+| `EXCEL_PATH` | Excel export path | data/finance/expenses.xlsx |
 
 ## Usage
 

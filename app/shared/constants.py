@@ -19,4 +19,3 @@ DEFAULT_CATEGORIES = [
     "Income",
     "Other",
 ]
-

@@ -17,18 +17,18 @@ from app.modules.finance.repository import (
     Transaction,
     add_transaction,
     delete_transaction,
+    get_current_balance,
+    get_initial_balance,
     get_monthly_summary,
     get_needs_review_transactions,
     get_today_transactions,
     get_transaction,
     get_transactions,
-    update_transaction,
-    get_current_balance,
-    get_initial_balance,
     set_initial_balance,
+    update_transaction,
 )
 from app.modules.finance.service import process_expense_text
-from app.modules.finance.storage import export_to_excel, export_period_to_excel
+from app.modules.finance.storage import export_period_to_excel, export_to_excel
 from app.shared.exceptions import handle_error
 
 logger = logging.getLogger(__name__)
@@ -41,9 +41,9 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     user = update.effective_user
     user_id = update.effective_user.id if update.effective_user else None
-    
+
     from app.core.database import get_user_language
-    from app.i18n import get_message
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     await update.message.reply_html(
@@ -65,16 +65,15 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     user_id = update.effective_user.id if update.effective_user else None
-    
+
     from app.core.database import get_user_language
-    from app.i18n import get_message
+
     lang = get_user_language(user_id) if user_id else "vi"
-    
+
     # Vietnamese help
     if lang == "vi":
         msg = """*Lệnh Bot Tài Chính*
 
-/add - Thêm chi tiêu mới (ví dụ: "30k đánh cầu sân win win")
 /list - Xem giao dịch gần đây
 /export - Xuất Excel (cách dùng: /export [today|week|month|year])
 /stats - Thống kê chi tiêu hàng tháng
@@ -93,7 +92,6 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         msg = """*Finance Bot Commands*
 
-/add - Add new expense (e.g., "30k đánh cầu sân win win")
 /list - Show recent transactions
 /export - Export to Excel (usage: /export [today|week|month|year])
 /stats - Monthly spending summary
@@ -132,8 +130,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not text:
         user_id = update.effective_user.id if update.effective_user else None
         from app.core.database import get_user_language
+
         lang = get_user_language(user_id) if user_id else "vi"
-        await update.message.reply_text("Vui lòng gửi nội dung chi tiêu." if lang == "vi" else "Please send some expense text.")
+        await update.message.reply_text(
+            "Vui lòng gửi nội dung chi tiêu."
+            if lang == "vi"
+            else "Please send some expense text."
+        )
         return
 
     # Check if we're in edit mode (waiting for field value)
@@ -142,6 +145,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         tx_data = context.user_data.get("pending_tx")
         user_id = update.effective_user.id if update.effective_user else None
         from app.core.database import get_user_language
+
         lang = get_user_language(user_id) if user_id else "vi"
         if not tx_data:
             await update.message.reply_text("*Không tìm thấy giao dịch.*")
@@ -552,7 +556,7 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
-    from app.i18n import get_message
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     now = datetime.now()
@@ -632,21 +636,25 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Send file via Telegram
         from pathlib import Path
+
         if Path(path).exists():
             with open(path, "rb") as f:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=f,
                     filename=Path(path).name,
-                    caption=f"*Exported {count} transaction(s) for {period}*" + 
-                            (f" {year}" if period == "year" else 
-                             f" {year}-{month:02d}" if period == "month" else ""),
+                    caption=f"*Exported {count} transaction(s) for {period}*"
+                    + (
+                        f" {year}"
+                        if period == "year"
+                        else f" {year}-{month:02d}"
+                        if period == "month"
+                        else ""
+                    ),
                     parse_mode="Markdown",
                 )
         else:
-            await update.message.reply_text(
-                f"No transactions found for {period}."
-            )
+            await update.message.reply_text(f"No transactions found for {period}.")
 
     except Exception as e:
         logger.exception("Export error")
@@ -660,13 +668,17 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
-    from app.i18n import get_message
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     txs = get_needs_review_transactions()
 
     if not txs:
-        msg = "*Không có giao dịch nào cần kiểm tra.*" if lang == "vi" else "*No transactions need review.*"
+        msg = (
+            "*Không có giao dịch nào cần kiểm tra.*"
+            if lang == "vi"
+            else "*No transactions need review.*"
+        )
         await update.message.reply_text(msg)
         return
 
@@ -699,7 +711,7 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
-    from app.i18n import get_message
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     txs = get_today_transactions()
@@ -710,7 +722,7 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     total = sum(tx.amount for tx in txs)
-    
+
     if lang == "vi":
         msg = f"*Chi tiêu hôm nay:* {total:,.0f} VND\n\n"
 
@@ -732,14 +744,15 @@ async def current_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
-    from app.i18n import get_message
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     current_balance = get_current_balance()
     initial_balance = get_initial_balance()
-    
+
     # Get income and expenses for breakdown
     from app.core.database import get_db_cursor
+
     with get_db_cursor() as cursor:
         cursor.execute("""
             SELECT 
@@ -748,10 +761,10 @@ async def current_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             FROM transactions
         """)
         row = cursor.fetchone()
-    
+
     income = row[0]
     expenses = row[1]
-    
+
     if lang == "vi":
         msg = f"*Số dư hiện tại:* {current_balance:,.0f} VND\n\n"
         msg += "*Chi tiết:*\n"
@@ -768,19 +781,21 @@ async def current_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def setbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def setbalance_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """Set initial balance."""
     if not update.message:
         return
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
-    from app.i18n import get_message
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     text = update.message.text.strip()
     parts = text.split()
-    
+
     if len(parts) < 2:
         current = get_initial_balance()
         if lang == "vi":
@@ -791,7 +806,7 @@ async def setbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             msg += "Usage: `/setbalance <amount>`"
         await update.message.reply_text(msg, parse_mode="Markdown")
         return
-    
+
     try:
         amount = float(parts[1].replace(",", ""))
         set_initial_balance(amount)
@@ -817,6 +832,7 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     text = update.message.text.strip()
@@ -827,7 +843,11 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         recent_txs = get_transactions(10)
 
         if not recent_txs:
-            msg = "*Không có giao dịch nào để xóa.*" if lang == "vi" else "*No transactions to remove.*"
+            msg = (
+                "*Không có giao dịch nào để xóa.*"
+                if lang == "vi"
+                else "*No transactions to remove.*"
+            )
             await update.message.reply_text(msg)
             return
 
@@ -870,12 +890,22 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             msg = f"*Deleted {len(deleted)} transaction(s):*\n"
             for tx_id, tx in deleted:
-                msg += f"• `{tx_id}` - {tx.amount:,.0f} VND - {tx.merchant or 'Unknown'}\n"
+                msg += (
+                    f"• `{tx_id}` - {tx.amount:,.0f} VND - {tx.merchant or 'Unknown'}\n"
+                )
     else:
-        msg = "*Không có giao dịch nào được xóa.*" if lang == "vi" else "*No transactions were deleted.*"
+        msg = (
+            "*Không có giao dịch nào được xóa.*"
+            if lang == "vi"
+            else "*No transactions were deleted.*"
+        )
 
     if not_found:
-        msg += f"\n*Không tìm thấy:* {', '.join(not_found)}" if lang == "vi" else f"\n*Not found:* {', '.join(not_found)}"
+        msg += (
+            f"\n*Không tìm thấy:* {', '.join(not_found)}"
+            if lang == "vi"
+            else f"\n*Not found:* {', '.join(not_found)}"
+        )
 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -892,6 +922,7 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if len(parts) < 2:
         from app.core.database import get_user_language
         from app.i18n import get_message
+
         current_lang = get_user_language(user_id) if user_id else "vi"
         msg = f"{get_message('language_set', current_lang)}{'🇻🇳 Vietnamese' if current_lang == 'vi' else '🇺🇸 English'}\n\n"
         msg += "Usage: `/language en` or `/language vi`"
@@ -908,6 +939,7 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     from app.core.database import set_user_language
     from app.i18n import get_message
+
     if user_id:
         set_user_language(user_id, lang)
 
@@ -923,7 +955,7 @@ async def get_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id if update.effective_user else "Unknown"
 
-    msg = f"*Chat Information:*\n\n"
+    msg = "*Chat Information:*\n\n"
     msg += f"• Chat ID: `{chat_id}`\n"
     msg += f"• User ID: `{user_id}`\n"
     msg += f"• Chat type: `{update.effective_chat.type}`"
@@ -955,16 +987,20 @@ def register_finance_handlers(application) -> None:
     application.add_handler(CommandHandler("week", week_command))
 
     # Register dynamic command handler for /Ndays
-    from telegram.ext import MessageHandler
-    from telegram import Update
     import re
-    
-    async def handle_days_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.message and re.match(r"/\d+days", update.message.text.strip(), re.IGNORECASE):
+
+    from telegram import Update
+
+    async def handle_days_command(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if update.message and re.match(
+            r"/\d+days", update.message.text.strip(), re.IGNORECASE
+        ):
             await days_command(update, context)
         elif update.message and update.message.text.strip().lower().startswith("/days"):
             await days_command(update, context)
-    
+
     application.add_handler(MessageHandler(filters.COMMAND, handle_days_command))
 
     application.add_handler(
@@ -984,17 +1020,19 @@ async def days_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
     from app.modules.finance.storage import get_transactions_last_n_days
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     text = update.message.text.strip()
     parts = text.split()
-    
+
     # Parse number of days from command
     command = parts[0].lower()
     days = 7  # default
-    
+
     # Try to parse number from command like "/7days"
     import re
+
     match = re.match(r"/(\d+)days", command)
     if match:
         days = int(match.group(1))
@@ -1043,6 +1081,7 @@ async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
     from app.modules.finance.storage import get_transactions_by_period
+
     lang = get_user_language(user_id) if user_id else "vi"
 
     txs = get_transactions_by_period("week", user_id=user_id)
@@ -1064,4 +1103,3 @@ async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             msg += "No transactions found."
 
     await update.message.reply_text(msg, parse_mode="Markdown")
-

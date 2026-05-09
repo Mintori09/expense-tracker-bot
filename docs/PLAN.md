@@ -45,26 +45,31 @@ telegram-bot/
 ## Module Responsibilities
 
 ### app/main.py
+
 - Bootstrap application
 - Setup logging
 - Initialize database
 - Start Telegram bot
 
 ### app/bot/dispatcher.py
+
 - Create Telegram Application
 - Register module handlers
 
 ### app/core/
+
 - Database connection
 - Logging setup
 - Shared utilities
 
 ### app/modules/finance/
+
 - Transaction extraction
 - OCR processing
 - Excel storage
 - Telegram handlers
 
 ### app/shared/
+
 - Common exceptions
 - Shared constants

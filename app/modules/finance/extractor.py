@@ -149,9 +149,7 @@ async def get_usd_to_vnd_rate() -> float:
 
         async with httpx.AsyncClient(timeout=5.0) as client:
             # Try open.er-api.com (free, no API key needed)
-            response = await client.get(
-                "https://open.er-api.com/v6/latest/USD"
-            )
+            response = await client.get("https://open.er-api.com/v6/latest/USD")
             if response.status_code == 200:
                 data = response.json()
                 if data.get("result") == "success" and "rates" in data:
@@ -167,7 +165,9 @@ async def get_usd_to_vnd_rate() -> float:
     return _usd_rate_cache["rate"]
 
 
-def parse_usd_amount(text: str, rate: float = None) -> tuple[Optional[float], Optional[str]]:
+def parse_usd_amount(
+    text: str, rate: float = None
+) -> tuple[Optional[float], Optional[str]]:
     """Parse USD amount format like '$10', '10 USD', '10 dollars'.
 
     Args:
@@ -317,6 +317,7 @@ Rules:
 
         transactions = []
         from app.shared.date_utils import VIETNAM_TZ
+
         today = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
 
         for item in data:
@@ -380,6 +381,7 @@ async def extract_transaction(
         # Parse date - use resolved_date or today if missing or invalid
         date = data.get("date")
         from app.shared.date_utils import VIETNAM_TZ
+
         today = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
 
         # If we resolved a relative date from the text, use it as the default
@@ -434,7 +436,9 @@ async def extract_transaction(
         raise ExtractionError(str(e))
 
 
-def extract_simple_fallback(text: str, usd_rate: float = None) -> Optional[ExtractedTransaction]:
+def extract_simple_fallback(
+    text: str, usd_rate: float = None
+) -> Optional[ExtractedTransaction]:
     """Simple fallback extraction without LLM for common Vietnamese patterns."""
     from app.shared.date_utils import VIETNAM_TZ, parse_vietnamese_date
 
@@ -457,7 +461,12 @@ def extract_simple_fallback(text: str, usd_rate: float = None) -> Optional[Extra
         amount = usd_amount
         detected_currency = usd_currency
         # Remove USD pattern from text
-        for pattern in [r"\$(\d+(?:[.,]\d+)?)", r"(\d+(?:[.,]\d+)?)\s*\$", r"(\d+(?:[.,]\d+)?)\s*usd", r"(\d+(?:[.,]\d+)?)\s*dollars?"]:
+        for pattern in [
+            r"\$(\d+(?:[.,]\d+)?)",
+            r"(\d+(?:[.,]\d+)?)\s*\$",
+            r"(\d+(?:[.,]\d+)?)\s*usd",
+            r"(\d+(?:[.,]\d+)?)\s*dollars?",
+        ]:
             merchant_text = re.sub(pattern, "", text, flags=re.IGNORECASE)
     else:
         # Try to find amount with k or tr suffix first
@@ -466,10 +475,14 @@ def extract_simple_fallback(text: str, usd_rate: float = None) -> Optional[Extra
 
         if k_match:
             amount = float(k_match.group(1).replace(",", ".")) * 1000
-            merchant_text = (text[: k_match.start()] + " " + text[k_match.end() :]).strip()
+            merchant_text = (
+                text[: k_match.start()] + " " + text[k_match.end() :]
+            ).strip()
         elif tr_match:
             amount = float(tr_match.group(1).replace(",", ".")) * 1000000
-            merchant_text = (text[: tr_match.start()] + " " + text[tr_match.end() :]).strip()
+            merchant_text = (
+                text[: tr_match.start()] + " " + text[tr_match.end() :]
+            ).strip()
         else:
             # Try standard number format
             num_match = re.search(r"(\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)", text)
@@ -582,4 +595,3 @@ def extract_multiple_fallback(text: str) -> list[ExtractedTransaction]:
             )
 
     return transactions
-

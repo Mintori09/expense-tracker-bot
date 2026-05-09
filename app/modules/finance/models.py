@@ -38,4 +38,3 @@ class FinanceSummary:
 
 
 __all__ = ["Expense", "FinanceSummary"]
-

@@ -14,20 +14,20 @@ def get_transactions_last_n_days(n: int, user_id: int = None) -> list[Transactio
     now = datetime.now()
     start = now - timedelta(days=n - 1)
     end = now
-    
+
     query = "SELECT * FROM transactions WHERE date BETWEEN ? AND ?"
     params = [start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")]
-    
+
     if user_id:
         query += " AND user_id = ?"
         params.append(user_id)
-    
+
     query += " ORDER BY date DESC"
-    
+
     with get_db_cursor() as cursor:
         cursor.execute(query, params)
         rows = cursor.fetchall()
-    
+
     return [
         Transaction(
             id=row[0],
@@ -249,4 +249,3 @@ def export_monthly_summary(year: int, month: int) -> str:
 
 
 __all__ = ["export_to_excel", "export_period_to_excel", "export_monthly_summary"]
-

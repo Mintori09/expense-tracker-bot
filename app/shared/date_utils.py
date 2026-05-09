@@ -215,4 +215,3 @@ def extract_date_from_text(text: str) -> Optional[str]:
 
     # Finally try Vietnamese relative dates
     return parse_vietnamese_date(text)
-

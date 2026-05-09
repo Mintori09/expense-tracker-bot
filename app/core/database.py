@@ -484,4 +484,3 @@ def set_user_language(user_id: int, language: str) -> None:
             (user_id, language, datetime.now().isoformat()),
         )
     logger.info(f"Set language for user {user_id}: {language}")
-

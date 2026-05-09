@@ -103,11 +103,13 @@ async def process_expense_text(
         logger.warning("LLM extraction failed: %s, trying fallback", e)
 
         # Try to get realtime USD rate
-        from app.modules.finance.extractor import USD_TO_VND_RATE, get_usd_to_vnd_rate
+        from app.modules.finance.extractor import USD_TO_VND_RATE
+
         usd_rate = USD_TO_VND_RATE
         if "$" in text or "usd" in text.lower() or "dollar" in text.lower():
             try:
                 from app.modules.finance.extractor import get_usd_to_vnd_rate
+
                 usd_rate = await get_usd_to_vnd_rate()
                 logger.info(f"Using USD rate: {usd_rate}")
             except Exception as rate_error:
@@ -169,70 +171,51 @@ async def _confirm_and_store(
     user_id: int = None,
     lang: str = "vi",
 ) -> None:
-    """Confirm transaction with user and store if approved."""
-    import uuid
-
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
+    """Store transaction directly without confirmation (auto-save mode)."""
     if not update.message:
         return
 
     duplicates = find_duplicates(tx.merchant or "", tx.amount, tx.date)
 
-    msg = "*Xác nhận chi tiêu:*\n\n" if lang == "vi" else "*Confirm expense:*\n\n"
+    # Always save directly - no confirmation needed
+    transaction = Transaction(
+        date=tx.date,
+        merchant=tx.merchant,
+        amount=tx.amount,
+        currency=tx.currency,
+        category=tx.category,
+        payment_method=tx.payment_method,
+        description=tx.description,
+        source_type=tx.source_type,
+        confidence=tx.confidence,
+        needs_review=tx.needs_review,
+        user_id=user_id,
+    )
+
+    add_transaction(transaction, tx.description or "")
+    export_to_excel()
+
+    msg = "*Thêm chi tiêu:*\n\n" if lang == "vi" else "*Added expense:*\n\n"
     msg += f"Ngày: {tx.date}\n" if lang == "vi" else f"Date: {tx.date}\n"
-    msg += f"Mô tả: {tx.description}\n" if lang == "vi" else f"Description: {tx.description}\n"
-    msg += f"Cửa hàng: {tx.merchant or 'Không rõ'}\n" if lang == "vi" else f"Merchant: {tx.merchant or 'Unknown'}\n"
-    msg += f"Số tiền: {tx.amount:,.0f} {tx.currency}\n" if lang == "vi" else f"Amount: {tx.amount:,.0f} {tx.currency}\n"
-    msg += f"Danh mục: {tx.category}\n" if lang == "vi" else f"Category: {tx.category}\n"
-    msg += f"Độ tin cậy: {tx.confidence * 100:.0f}%\n" if lang == "vi" else f"Confidence: {tx.confidence * 100:.0f}%\n"
+    msg += (
+        f"Mô tả: {tx.description}\n"
+        if lang == "vi"
+        else f"Description: {tx.description}\n"
+    )
+    msg += (
+        f"Cửa hàng: {tx.merchant or 'Không rõ'}\n"
+        if lang == "vi"
+        else f"Merchant: {tx.merchant or 'Unknown'}\n"
+    )
+    msg += f"Số tiền: {tx.amount:,.0f} {tx.currency}\n"
+    msg += f"Danh mục: {tx.category}\n"
 
     if duplicates:
-        msg += "\n*Có thể trùng lặp!*" if lang == "vi" else "\n*Possible duplicate detected!*"
-
-    if tx.needs_review or tx.confidence < 0.8:
-        msg += "\n\n*Cần xác nhận của bạn*" if lang == "vi" else "\n\n*Needs your confirmation*"
-
-        # Generate unique pending ID
-        pending_id = str(uuid.uuid4())[:8]
-        context.user_data["pending_tx"] = tx
-        context.user_data[f"pending_tx_{pending_id}"] = tx
-
-        keyboard = [
-            [
-                InlineKeyboardButton("Confirm", callback_data=f"confirm:{pending_id}"),
-                InlineKeyboardButton("Edit", callback_data=f"edit:{pending_id}"),
-                InlineKeyboardButton("Cancel", callback_data=f"cancel:{pending_id}"),
-            ],
-        ]
-
-        await update.message.reply_text(
-            msg,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown",
-        )
-
+        msg += "\n*Cảnh báo: Có giao dịch tương tự*"
     else:
-        transaction = Transaction(
-            date=tx.date,
-            merchant=tx.merchant,
-            amount=tx.amount,
-            currency=tx.currency,
-            category=tx.category,
-            payment_method=tx.payment_method,
-            description=tx.description,
-            source_type=tx.source_type,
-            confidence=tx.confidence,
-            needs_review=tx.needs_review,
-            user_id=user_id,
-        )
+        msg += "\n\n*Đã lưu thành công!*"
 
-        add_transaction(transaction, tx.description or "")
-        export_to_excel()
-
-        msg += "\n\n*Đã thêm vào cơ sở dữ liệu!*" if lang == "vi" else "\n\n*Added to database!*"
-
-        await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 def _handle_error(error: Exception, context: Optional[str] = None) -> str:
@@ -243,4 +226,3 @@ def _handle_error(error: Exception, context: Optional[str] = None) -> str:
 
 
 __all__ = ["process_expense_text", "init_db_schema"]
-

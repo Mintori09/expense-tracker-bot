@@ -6,7 +6,6 @@ MESSAGES = {
     "vi": {
         "help_text": """*Lệnh Bot Tài Chính*
 
-/add - Thêm chi tiêu mới (ví dụ: "30k đánh cầu sân win win")
 /list - Xem giao dịch gần đây
 /export - Xuất Excel (cách dùng: /export [today|week|month|year])
 /stats - Thống kê chi tiêu hàng tháng
@@ -27,7 +26,6 @@ MESSAGES = {
     "en": {
         "help_text": """*Finance Bot Commands*
 
-/add - Add new expense (e.g., "30k đánh cầu sân win win")
 /list - Show recent transactions
 /export - Export to Excel (usage: /export [today|week|month|year])
 /stats - Monthly spending summary
@@ -55,4 +53,3 @@ def get_message(key: str, lang: str = "en", **kwargs) -> str:
 
 
 __all__ = ["MESSAGES", "get_message"]
-
