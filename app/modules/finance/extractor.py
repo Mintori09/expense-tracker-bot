@@ -11,6 +11,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
+from app.shared.date_utils import resolve_relative_dates
 from app.shared.exceptions import ExtractionError
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ class ExtractedTransaction(BaseModel):
     source_type: str = "text"
     confidence: float = Field(ge=0, le=1, default=0.9)
     needs_review: bool = False
-    chat_id: Optional[int] = None
+    user_id: Optional[int] = None
 
     @field_validator("date")
     @classmethod
@@ -171,6 +172,11 @@ async def extract_transactions(text: str, source_type: str = "text") -> list[Ext
     """Extract multiple transactions from invoice/receipt text using LLM."""
     logger.info(f"=== Extracting transactions from: '{text[:100]}...' (source: {source_type})")
     
+    # Pre-process text to resolve Vietnamese relative dates
+    text, resolved_date = resolve_relative_dates(text)
+    if resolved_date:
+        logger.info(f"Resolved relative date in text: {resolved_date}")
+    
     system_prompt = """You are a finance data extraction assistant.
 
 Extract ALL items from the invoice/receipt. Each line item is a separate transaction.
@@ -221,8 +227,13 @@ Rules:
         
         for item in data:
             try:
+                item_date = item.get("date")
+                # Use resolved date if no date provided
+                if not item_date:
+                    item_date = resolved_date or today
+                    
                 tx = ExtractedTransaction(
-                    date=item.get("date") or today,
+                    date=item_date,
                     merchant=item.get("merchant"),
                     amount=float(item.get("amount", 0)),
                     currency=item.get("currency", "VND"),
@@ -251,6 +262,11 @@ async def extract_transaction(
     """Extract transaction data from text using LLM."""
     logger.info(f"=== Extracting transaction from: '{text[:50]}...' (source: {source_type})")
     
+    # Pre-process text to resolve Vietnamese relative dates
+    text, resolved_date = resolve_relative_dates(text)
+    if resolved_date:
+        logger.info(f"Resolved relative date in text: {resolved_date}")
+    
     try:
         response = await call_llm(text)
 
@@ -265,24 +281,26 @@ async def extract_transaction(
         if "amount" not in data:
             raise ExtractionError("Missing amount in extraction")
 
-        # Parse date - use today if missing or invalid
+        # Parse date - use resolved_date or today if missing or invalid
         date = data.get("date")
         today = datetime.now().strftime("%Y-%m-%d")
+        
+        # If we resolved a relative date from the text, use it as the default
         if not date:
-            date = today
+            date = resolved_date or today
         else:
             # Validate date is reasonable (not in the future, not too old)
             try:
                 parsed_date = datetime.strptime(date, "%Y-%m-%d")
                 today_dt = datetime.now()
-                # If date is in future or more than 30 days ago, use today
+                # If date is in future or more than 30 days ago, use resolved or today
                 if (
                     parsed_date.date() > today_dt.date()
                     or (today_dt.date() - parsed_date.date()).days > 30
                 ):
-                    date = today
+                    date = resolved_date or today
             except ValueError:
-                date = today
+                date = resolved_date or today
 
         # Ensure amount is float
         amount = float(data["amount"])
@@ -319,8 +337,15 @@ async def extract_transaction(
 
 def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
     """Simple fallback extraction without LLM for common Vietnamese patterns."""
+    from app.shared.date_utils import parse_vietnamese_date
+    
     # Clean text
     text = text.strip()
+    
+    # Try to parse Vietnamese relative date from the beginning of the text
+    date = parse_vietnamese_date(text)
+    if date is None:
+        date = datetime.now().strftime("%Y-%m-%d")
 
     # Find amount first
     amount = None
@@ -352,9 +377,9 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
             ).strip()
 
     if amount and amount > 0:
-        # Clean up merchant name - remove common prefixes (Vietnamese verbs/phrases)
+        # Clean up merchant name - remove common prefixes (Vietnamese verbs/phrases and date expressions)
         merchant = re.sub(
-            r"\b(ăn|mua|chi|pay|paid|spent|giao\s?dịch|sáng|trưa|chiều|đêm|tối|cà\s?phê|internet)\b\s*",
+            r"\b(ăn|mua|chi|pay|paid|spent|giao\s?dịch|sáng|trưa|chiều|đêm|tối|cà\s?phê|internet|hôm qua|hôm kia|ngày mai|mống mai|hôm nay|nay)\b\s*",
             "",
             merchant,
             flags=re.IGNORECASE,
@@ -371,7 +396,7 @@ def extract_simple_fallback(text: str) -> Optional[ExtractedTransaction]:
         category = get_category_for_merchant(merchant) or "Other"
 
         return ExtractedTransaction(
-            date=datetime.now().strftime("%Y-%m-%d"),
+            date=date,
             merchant=merchant if merchant else None,
             amount=amount,
             currency="VND",
@@ -392,7 +417,14 @@ def extract_multiple_fallback(text: str) -> list[ExtractedTransaction]:
     Example: "30k đánh cầu sân win win, 50k đánh cầu sân lâm gia"
     Returns: [30k transaction, 50k transaction]
     """
+    from app.shared.date_utils import parse_vietnamese_date
+    
     transactions = []
+    
+    # Try to parse Vietnamese relative date from the text
+    date = parse_vietnamese_date(text)
+    if date is None:
+        date = datetime.now().strftime("%Y-%m-%d")
     
     # Find all k/tr amounts in the text
     k_matches = list(re.finditer(r"(\d+(?:[.,]\d+)?)\s*k", text, re.IGNORECASE))
@@ -404,8 +436,6 @@ def extract_multiple_fallback(text: str) -> list[ExtractedTransaction]:
     
     if len(all_matches) <= 1:
         return transactions  # Not multiple transactions
-    
-    today = datetime.now().strftime("%Y-%m-%d")
     
     for i, (pos, type_, match) in enumerate(all_matches):
         if type_ == 'k':
@@ -427,7 +457,7 @@ def extract_multiple_fallback(text: str) -> list[ExtractedTransaction]:
         
         if item_text:
             transactions.append(ExtractedTransaction(
-                date=today,
+                date=date,
                 merchant=None,
                 amount=amount,
                 currency="VND",

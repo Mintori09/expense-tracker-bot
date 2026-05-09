@@ -347,7 +347,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
         for tx_data in transactions:
-            chat_id = tx_data.chat_id
+            user_id = tx_data.user_id
             transaction = Transaction(
                 date=tx_data.date,
                 merchant=tx_data.merchant,
@@ -359,7 +359,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 source_type=tx_data.source_type,
                 confidence=tx_data.confidence,
                 needs_review=tx_data.needs_review,
-                chat_id=chat_id,
+                user_id=user_id,
             )
             add_transaction(transaction, tx_data.description or "")
 
@@ -436,7 +436,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 source_type=tx_data.source_type,
                 confidence=tx_data.confidence,
                 needs_review=tx_data.needs_review,
-                chat_id=tx_data.chat_id,
+                user_id=tx_data.user_id,
             )
 
             add_transaction(transaction, tx_data.description or "")
@@ -469,7 +469,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             source_type=tx_data.source_type,
             confidence=tx_data.confidence,
             needs_review=tx_data.needs_review,
-            chat_id=tx_data.chat_id,
+            user_id=tx_data.user_id,
         )
 
         add_transaction(transaction, tx_data.description or "")
@@ -536,8 +536,8 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text.strip()
     parts = text.split()
 
-    # Get chat_id for isolation
-    chat_id = update.effective_chat.id if update.effective_chat else None
+    # Get user_id for isolation
+    user_id = update.effective_user.id if update.effective_user else None
 
     # Default to all transactions
     period = "all"
@@ -566,7 +566,7 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             export_to_excel()
             count = len(get_transactions())
         else:
-            path, count = export_period_to_excel(period, year, month, chat_id)
+            path, count = export_period_to_excel(period, year, month, user_id)
 
         # Send file via Telegram
         from pathlib import Path

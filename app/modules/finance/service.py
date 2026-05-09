@@ -38,10 +38,10 @@ async def process_expense_text(
     if not update.message:
         return
 
-    # Get chat_id for data isolation
-    chat_id = update.effective_chat.id if update.effective_chat else None
+    # Get user_id for data isolation
+    user_id = update.effective_user.id if update.effective_user else None
 
-    logger.info("Processing expense text: %r from %s (chat_id: %s)", text, source_type, chat_id)
+    logger.info("Processing expense text: %r from %s (user_id: %s)", text, source_type, user_id)
 
     try:
         # Try multi-transaction extraction first (for invoices with multiple items)
@@ -58,9 +58,9 @@ async def process_expense_text(
             msg += f"\n*Total: {total:,.0f} VND*\n\n"
             msg += "Send 'save' to save all, or send individual item text to edit."
 
-            # Store chat_id with transactions
+            # Store user_id with transactions
             for tx in transactions:
-                tx.chat_id = chat_id
+                tx.user_id = user_id
 
             context.user_data["pending_txs"] = transactions
 
@@ -78,7 +78,7 @@ async def process_expense_text(
             return
 
         extracted = await extract_transaction(text, source_type)
-        extracted.chat_id = chat_id
+        extracted.user_id = user_id
 
         logger.info(
             "LLM extracted: amount=%s, merchant=%s, confidence=%s",
@@ -87,7 +87,7 @@ async def process_expense_text(
             extracted.confidence,
         )
 
-        await _confirm_and_store(update, context, extracted, chat_id)
+        await _confirm_and_store(update, context, extracted, user_id)
 
     except ExtractionError as e:
         logger.warning("LLM extraction failed: %s, trying fallback", e)
@@ -105,9 +105,9 @@ async def process_expense_text(
             msg += f"\n*Total: {total:,.0f} VND*\n\n"
             msg += "Send 'save' to save all, or send individual item text to edit."
 
-            # Store chat_id with transactions
+            # Store user_id with transactions
             for tx in multiple_txs:
-                tx.chat_id = chat_id
+                tx.user_id = user_id
 
             context.user_data["pending_txs"] = multiple_txs
 
@@ -127,8 +127,8 @@ async def process_expense_text(
         fallback = extract_simple_fallback(text)
 
         if fallback:
-            fallback.chat_id = chat_id
-            await _confirm_and_store(update, context, fallback, chat_id)
+            fallback.user_id = user_id
+            await _confirm_and_store(update, context, fallback, user_id)
         else:
             await update.message.reply_text(
                 _handle_error(ExtractionError("Could not extract"))
@@ -143,7 +143,7 @@ async def _confirm_and_store(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     tx: ExtractedTransaction,
-    chat_id: int = None,
+    user_id: int = None,
 ) -> None:
     """Confirm transaction with user and store if approved."""
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -199,7 +199,7 @@ async def _confirm_and_store(
             source_type=tx.source_type,
             confidence=tx.confidence,
             needs_review=tx.needs_review,
-            chat_id=chat_id,
+            user_id=user_id,
         )
 
         add_transaction(transaction, tx.description or "")

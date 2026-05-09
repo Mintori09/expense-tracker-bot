@@ -31,7 +31,7 @@ class Transaction:
     needs_review: bool = False
     id: Optional[int] = None
     source_hash: Optional[str] = None
-    chat_id: Optional[int] = None
+    user_id: Optional[int] = None
 
     def compute_hash(self, source_text: str = "") -> str:
         """Compute unique hash for deduplication."""
@@ -64,7 +64,7 @@ def init_schema() -> None:
             confidence REAL,
             needs_review INTEGER,
             source_hash TEXT UNIQUE,
-            chat_id INTEGER,
+            user_id INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -107,7 +107,7 @@ def add_transaction(tx: Transaction, source_text: str = "") -> int | None:
             cursor.execute(
                 """
                 INSERT OR IGNORE INTO transactions 
-                (date, merchant, amount, currency, category, payment_method, description, source_type, confidence, needs_review, source_hash, chat_id)
+                (date, merchant, amount, currency, category, payment_method, description, source_type, confidence, needs_review, source_hash, user_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
@@ -122,7 +122,7 @@ def add_transaction(tx: Transaction, source_text: str = "") -> int | None:
                     tx.confidence,
                     tx.needs_review,
                     tx.source_hash,
-                    tx.chat_id,
+                    tx.user_id,
                 ),
             )
             tx_id = cursor.lastrowid
@@ -218,7 +218,7 @@ def find_duplicates(
             confidence=row[9],
             needs_review=bool(row[10]),
             source_hash=row[11] if len(row) > 11 else None,
-            chat_id=row[12] if len(row) > 12 else None,
+            user_id=row[12] if len(row) > 12 else None,
         )
         for row in rows
     ]
@@ -252,7 +252,7 @@ def get_transactions(limit: int = 100) -> list[Transaction]:
             confidence=row[9],
             needs_review=bool(row[10]),
             source_hash=row[11] if len(row) > 11 else None,
-            chat_id=row[12] if len(row) > 12 else None,
+            user_id=row[12] if len(row) > 12 else None,
         )
         for row in rows
     ]
@@ -283,7 +283,7 @@ def get_needs_review_transactions() -> list[Transaction]:
             confidence=row[9],
             needs_review=bool(row[10]),
             source_hash=row[11] if len(row) > 11 else None,
-            chat_id=row[12] if len(row) > 12 else None,
+            user_id=row[12] if len(row) > 12 else None,
         )
         for row in rows
     ]
@@ -336,7 +336,7 @@ def get_transaction(tx_id: int) -> Optional[Transaction]:
         confidence=row[9],
         needs_review=bool(row[10]),
         source_hash=row[11] if len(row) > 11 else None,
-        chat_id=row[12] if len(row) > 12 else None,
+        user_id=row[12] if len(row) > 12 else None,
     )
 
 
@@ -368,7 +368,7 @@ def get_today_transactions() -> list[Transaction]:
             confidence=row[9],
             needs_review=bool(row[10]),
             source_hash=row[11] if len(row) > 11 else None,
-            chat_id=row[12] if len(row) > 12 else None,
+            user_id=row[12] if len(row) > 12 else None,
         )
         for row in rows
     ]

@@ -45,8 +45,8 @@ def export_to_excel(transactions: list[Transaction] = None) -> str:
     return settings.excel_path
 
 
-def get_transactions_by_period(period: str, year: int = None, month: int = None, chat_id: int = None) -> list[Transaction]:
-    """Get transactions filtered by period (today, week, month, year) and optionally by chat_id."""
+def get_transactions_by_period(period: str, year: int = None, month: int = None, user_id: int = None) -> list[Transaction]:
+    """Get transactions filtered by period (today, week, month, year) and optionally by user_id."""
     now = datetime.now()
     year = year or now.year
     month = month or now.month
@@ -55,9 +55,9 @@ def get_transactions_by_period(period: str, year: int = None, month: int = None,
         date = now.strftime("%Y-%m-%d")
         query = "SELECT * FROM transactions WHERE date = ?"
         params = [date]
-        if chat_id:
-            query += " AND chat_id = ?"
-            params.append(chat_id)
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
         query += " ORDER BY date DESC"
         with get_db_cursor() as cursor:
             cursor.execute(query, params)
@@ -68,9 +68,9 @@ def get_transactions_by_period(period: str, year: int = None, month: int = None,
         end = start + timedelta(days=6)
         query = "SELECT * FROM transactions WHERE date BETWEEN ? AND ?"
         params = [start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")]
-        if chat_id:
-            query += " AND chat_id = ?"
-            params.append(chat_id)
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
         query += " ORDER BY date DESC"
         with get_db_cursor() as cursor:
             cursor.execute(query, params)
@@ -79,9 +79,9 @@ def get_transactions_by_period(period: str, year: int = None, month: int = None,
         query = """SELECT * FROM transactions 
                    WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?"""
         params = [str(year), f"{month:02d}"]
-        if chat_id:
-            query += " AND chat_id = ?"
-            params.append(chat_id)
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
         query += " ORDER BY date DESC"
         with get_db_cursor() as cursor:
             cursor.execute(query, params)
@@ -89,9 +89,9 @@ def get_transactions_by_period(period: str, year: int = None, month: int = None,
     elif period == "year":
         query = "SELECT * FROM transactions WHERE strftime('%Y', date) = ?"
         params = [str(year)]
-        if chat_id:
-            query += " AND chat_id = ?"
-            params.append(chat_id)
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
         query += " ORDER BY date DESC"
         with get_db_cursor() as cursor:
             cursor.execute(query, params)
@@ -105,13 +105,13 @@ def get_transactions_by_period(period: str, year: int = None, month: int = None,
             category=row[5], payment_method=row[6], description=row[7],
             source_type=row[8], confidence=row[9], needs_review=bool(row[10]),
             source_hash=row[11] if len(row) > 11 else None,
-            chat_id=row[12] if len(row) > 12 else None,
+            user_id=row[12] if len(row) > 12 else None,
         )
         for row in rows
     ]
 
 
-def export_period_to_excel(period: str, year: int = None, month: int = None) -> tuple[str, int]:
+def export_period_to_excel(period: str, year: int = None, month: int = None, user_id: int = None) -> tuple[str, int]:
     """Export transactions for a specific period to Excel.
     
     Returns: (file_path, transaction_count)
@@ -119,7 +119,7 @@ def export_period_to_excel(period: str, year: int = None, month: int = None) -> 
     ensure_data_dir()
     import pandas as pd
 
-    transactions = get_transactions_by_period(period, year, month)
+    transactions = get_transactions_by_period(period, year, month, user_id)
     
     file_name = settings.excel_path.replace(".xlsx", f"_{period}.xlsx")
     
