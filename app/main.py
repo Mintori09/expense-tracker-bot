@@ -4,6 +4,7 @@ Bootstraps the application.
 """
 
 from app.bot.dispatcher import run_bot
+from app.config import print_config
 from app.core.database import init_schema
 from app.core.logging import setup_logging
 
@@ -14,6 +15,7 @@ setup_logging()
 def main() -> None:
     """Start the bot."""
     # Initialize database
+    print_config()
     init_schema()
 
     # Run the bot

@@ -139,6 +139,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
+    # Ignore malformed/unknown slash inputs so they are not parsed as expenses.
+    # Example: "/7dáya" should be treated as noise, not a transaction.
+    if text.startswith("/"):
+        logger.info("Ignoring slash-prefixed non-command text: %r", text)
+        return
+
     # Check if we're in edit mode (waiting for field value)
     editing_field = context.user_data.pop("editing_field", None)
     if editing_field:
@@ -278,6 +284,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     logger.info("=== Photo handling started ===")
 
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
+
     try:
         from app.config import ensure_data_dir
 
@@ -319,6 +330,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     logger.info("=== PDF handling started ===")
+
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
 
     try:
         from app.config import ensure_data_dir
@@ -378,6 +394,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     parts = data.split(":")
     action = parts[0]
     param = parts[1] if len(parts) > 1 else None
+    user_id = update.effective_user.id if update.effective_user else None
+    from app.core.database import get_user_language
+
+    lang = get_user_language(user_id) if user_id else "vi"
 
     # Helper to get transaction by pending_id
     def get_tx_by_id(pid):
@@ -548,11 +568,232 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await show_edit_menu(query, context, tx_data)
         return
 
+    elif action == "rm_multi_toggle" and param:
+        try:
+            tx_id = int(param)
+        except ValueError:
+            await query.edit_message_text(
+                "*ID giao dịch không hợp lệ.*"
+                if lang == "vi"
+                else "*Invalid transaction ID.*"
+            )
+            return
+
+        recent_txs = context.user_data.get("remove_recent_txs", [])
+        tx_ids = {tx.id for tx in recent_txs}
+        if tx_id not in tx_ids:
+            await query.edit_message_text(
+                "*Danh sách xóa đã hết hạn. Vui lòng chạy lại /remove.*"
+                if lang == "vi"
+                else "*Delete list expired. Please run /remove again.*"
+            )
+            return
+
+        selected = set(context.user_data.get("remove_selected_ids", []))
+        if tx_id in selected:
+            selected.remove(tx_id)
+        else:
+            selected.add(tx_id)
+        context.user_data["remove_selected_ids"] = list(selected)
+
+        msg, keyboard = build_remove_multi_ui(
+            recent_txs, selected, lang=lang, include_quick_hint=False
+        )
+        await query.edit_message_text(
+            msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    elif action == "rm_multi_confirm":
+        recent_txs = context.user_data.get("remove_recent_txs", [])
+        selected = set(context.user_data.get("remove_selected_ids", []))
+
+        if not recent_txs:
+            await query.edit_message_text(
+                "*Danh sách xóa đã hết hạn. Vui lòng chạy lại /remove.*"
+                if lang == "vi"
+                else "*Delete list expired. Please run /remove again.*"
+            )
+            return
+
+        if not selected:
+            await query.edit_message_text(
+                "*Bạn chưa chọn giao dịch nào để xóa.*"
+                if lang == "vi"
+                else "*No transaction selected for deletion.*"
+            )
+            return
+
+        deleted = []
+        not_found = []
+        tx_by_id = {tx.id: tx for tx in recent_txs}
+        for tx_id in sorted(selected):
+            tx = get_transaction(tx_id, user_id=user_id)
+            if not tx:
+                not_found.append(str(tx_id))
+                continue
+            if delete_transaction(tx_id, user_id=user_id):
+                deleted.append(tx_by_id.get(tx_id, tx))
+            else:
+                not_found.append(str(tx_id))
+
+        context.user_data.pop("remove_recent_txs", None)
+        context.user_data.pop("remove_selected_ids", None)
+
+        if deleted:
+            if lang == "vi":
+                msg = f"*Đã xóa {len(deleted)} giao dịch:*\n"
+                for tx in deleted:
+                    msg += (
+                        f"• `{tx.id}` - {tx.amount:,.0f} VND - "
+                        f"{tx.merchant or 'Không rõ'}\n"
+                    )
+            else:
+                msg = f"*Deleted {len(deleted)} transaction(s):*\n"
+                for tx in deleted:
+                    msg += (
+                        f"• `{tx.id}` - {tx.amount:,.0f} VND - "
+                        f"{tx.merchant or 'Unknown'}\n"
+                    )
+        else:
+            msg = (
+                "*Không có giao dịch nào được xóa.*"
+                if lang == "vi"
+                else "*No transactions were deleted.*"
+            )
+
+        if not_found:
+            msg += (
+                f"\n*Không thể xóa:* {', '.join(not_found)}"
+                if lang == "vi"
+                else f"\n*Could not delete:* {', '.join(not_found)}"
+            )
+
+        await query.edit_message_text(msg, parse_mode="Markdown")
+        return
+
+    elif action == "rm_multi_cancel":
+        context.user_data.pop("remove_recent_txs", None)
+        context.user_data.pop("remove_selected_ids", None)
+        await query.edit_message_text(
+            "*Đã hủy thao tác xóa nhiều giao dịch.*"
+            if lang == "vi"
+            else "*Bulk delete cancelled.*"
+        )
+        return
+
+    elif action == "rm_pick" and param:
+        try:
+            tx_id = int(param)
+        except ValueError:
+            await query.edit_message_text(
+                "*ID giao dịch không hợp lệ.*"
+                if lang == "vi"
+                else "*Invalid transaction ID.*"
+            )
+            return
+
+        tx = get_transaction(tx_id, user_id=user_id)
+        if not tx:
+            await query.edit_message_text(
+                "*Không tìm thấy giao dịch hoặc bạn không có quyền xóa.*"
+                if lang == "vi"
+                else "*Transaction not found or not allowed.*"
+            )
+            return
+
+        if lang == "vi":
+            msg = "*Xác nhận xóa giao dịch này?*\n\n"
+            msg += (
+                f"• `{tx.id}` {tx.date} - {tx.amount:,.0f} VND"
+                f" - {tx.merchant or 'Không rõ'}"
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "Xác nhận xóa", callback_data=f"rm_confirm:{tx.id}"
+                    )
+                ],
+                [InlineKeyboardButton("Hủy", callback_data="rm_cancel")],
+            ]
+        else:
+            msg = "*Confirm deleting this transaction?*\n\n"
+            msg += (
+                f"• `{tx.id}` {tx.date} - {tx.amount:,.0f} VND"
+                f" - {tx.merchant or 'Unknown'}"
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "Confirm Delete", callback_data=f"rm_confirm:{tx.id}"
+                    )
+                ],
+                [InlineKeyboardButton("Cancel", callback_data="rm_cancel")],
+            ]
+
+        await query.edit_message_text(
+            msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    elif action == "rm_confirm" and param:
+        try:
+            tx_id = int(param)
+        except ValueError:
+            await query.edit_message_text(
+                "*ID giao dịch không hợp lệ.*"
+                if lang == "vi"
+                else "*Invalid transaction ID.*"
+            )
+            return
+
+        tx = get_transaction(tx_id, user_id=user_id)
+        if not tx:
+            await query.edit_message_text(
+                "*Không tìm thấy giao dịch hoặc đã bị xóa.*"
+                if lang == "vi"
+                else "*Transaction not found or already deleted.*"
+            )
+            return
+
+        deleted = delete_transaction(tx_id, user_id=user_id)
+        if deleted:
+            if lang == "vi":
+                msg = (
+                    "*Đã xóa giao dịch:*\n"
+                    f"• `{tx.id}` - {tx.amount:,.0f} VND - {tx.merchant or 'Không rõ'}"
+                )
+            else:
+                msg = (
+                    "*Deleted transaction:*\n"
+                    f"• `{tx.id}` - {tx.amount:,.0f} VND - {tx.merchant or 'Unknown'}"
+                )
+        else:
+            msg = (
+                "*Không thể xóa giao dịch.*"
+                if lang == "vi"
+                else "*Could not delete transaction.*"
+            )
+
+        await query.edit_message_text(msg, parse_mode="Markdown")
+        return
+
+    elif action == "rm_cancel":
+        await query.edit_message_text(
+            "*Đã hủy thao tác xóa.*" if lang == "vi" else "*Delete cancelled.*"
+        )
+        return
+
 
 async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show monthly spending summary."""
     if not update.message:
         return
+
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
@@ -598,6 +839,11 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Export transactions to Excel with period options."""
     if not update.message:
         return
+
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
 
     text = update.message.text.strip()
     parts = text.split()
@@ -666,6 +912,11 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.message:
         return
 
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
+
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
 
@@ -709,6 +960,11 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
 
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
+
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
 
@@ -741,6 +997,11 @@ async def current_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     """Show current balance."""
     if not update.message:
         return
+
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
@@ -840,7 +1101,11 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # If no ID provided, show recent transactions
     if len(parts) < 2:
-        recent_txs = get_transactions(10)
+        recent_txs = (
+            get_transactions(10, user_id=user_id)
+            if user_id is not None
+            else get_transactions(10)
+        )
 
         if not recent_txs:
             msg = (
@@ -851,16 +1116,16 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(msg)
             return
 
-        if lang == "vi":
-            msg = "*Các giao dịch gần đây (dùng /remove <id> [id2] [id3]):*\n\n"
-            for tx in recent_txs[:5]:
-                msg += f"• `{tx.id}` {tx.date} - {tx.amount:,.0f} VND - {tx.merchant or 'Không rõ'}\n"
-        else:
-            msg = "*Recent transactions (use /remove <id> [id2] [id3]):*\n\n"
-            for tx in recent_txs[:5]:
-                msg += f"• `{tx.id}` {tx.date} - {tx.amount:,.0f} VND - {tx.merchant or 'Unknown'}\n"
+        candidates = recent_txs[:5]
+        context.user_data["remove_recent_txs"] = candidates
+        context.user_data["remove_selected_ids"] = []
 
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        msg, keyboard = build_remove_multi_ui(
+            candidates, set(), lang=lang, include_quick_hint=True
+        )
+        await update.message.reply_text(
+            msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return
 
     # Parse all IDs
@@ -874,9 +1139,9 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             not_found.append(id_str)
             continue
 
-        tx = get_transaction(tx_id)
+        tx = get_transaction(tx_id, user_id=user_id)
         if tx:
-            delete_transaction(tx_id)
+            delete_transaction(tx_id, user_id=user_id)
             deleted.append((tx_id, tx))
         else:
             not_found.append(str(tx_id))
@@ -908,6 +1173,91 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+def build_remove_multi_ui(
+    txs: list[Transaction],
+    selected_ids: set[int],
+    *,
+    lang: str,
+    include_quick_hint: bool,
+) -> tuple[str, list[list[InlineKeyboardButton]]]:
+    """Build inline UI for selecting multiple transactions to delete."""
+    def short_merchant(name: str | None) -> str:
+        raw = (name or "").strip()
+        if not raw:
+            return "Khong ro" if lang == "vi" else "Unknown"
+        return raw if len(raw) <= 12 else f"{raw[:11]}…"
+
+    def compact_amount(amount: float) -> str:
+        if amount >= 1_000_000:
+            return f"{amount / 1_000_000:.1f}m"
+        if amount >= 1_000:
+            return f"{amount / 1_000:.0f}k"
+        return f"{amount:.0f}"
+
+    if lang == "vi":
+        msg = "*Chọn nhiều giao dịch cần xóa:*\n\n"
+        for tx in txs:
+            mark = "✅" if tx.id in selected_ids else "⬜️"
+            msg += (
+                f"{mark} `{tx.id}` {tx.date} - {tx.amount:,.0f} VND - "
+                f"{tx.merchant or 'Không rõ'}\n"
+            )
+        msg += f"\n*Đã chọn:* {len(selected_ids)}"
+        if include_quick_hint:
+            msg += "\nHoặc dùng `/remove <id1> <id2> ...` để xóa nhanh."
+
+        keyboard: list[list[InlineKeyboardButton]] = [
+            [
+                InlineKeyboardButton(
+                    (
+                        f"{'✅' if tx.id in selected_ids else '⬜️'} "
+                        f"#{tx.id} • {compact_amount(tx.amount)} • "
+                        f"{short_merchant(tx.merchant)}"
+                    ),
+                    callback_data=f"rm_multi_toggle:{tx.id}",
+                )
+            ]
+            for tx in txs
+        ]
+        keyboard.append(
+            [InlineKeyboardButton("Xóa đã chọn", callback_data="rm_multi_confirm")]
+        )
+        keyboard.append([InlineKeyboardButton("Hủy", callback_data="rm_multi_cancel")])
+    else:
+        msg = "*Select multiple transactions to delete:*\n\n"
+        for tx in txs:
+            mark = "✅" if tx.id in selected_ids else "⬜️"
+            msg += (
+                f"{mark} `{tx.id}` {tx.date} - {tx.amount:,.0f} VND - "
+                f"{tx.merchant or 'Unknown'}\n"
+            )
+        msg += f"\n*Selected:* {len(selected_ids)}"
+        if include_quick_hint:
+            msg += "\nOr use `/remove <id1> <id2> ...` for quick delete."
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    (
+                        f"{'✅' if tx.id in selected_ids else '⬜️'} "
+                        f"#{tx.id} • {compact_amount(tx.amount)} • "
+                        f"{short_merchant(tx.merchant)}"
+                    ),
+                    callback_data=f"rm_multi_toggle:{tx.id}",
+                )
+            ]
+            for tx in txs
+        ]
+        keyboard.append(
+            [InlineKeyboardButton("Delete selected", callback_data="rm_multi_confirm")]
+        )
+        keyboard.append(
+            [InlineKeyboardButton("Cancel", callback_data="rm_multi_cancel")]
+        )
+
+    return msg, keyboard
 
 
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1017,6 +1367,11 @@ async def days_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not update.message:
         return
 
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
+
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language
     from app.modules.finance.storage import get_transactions_last_n_days
@@ -1077,6 +1432,11 @@ async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Show weekly expenses."""
     if not update.message:
         return
+
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
 
     user_id = update.effective_user.id if update.effective_user else None
     from app.core.database import get_user_language

@@ -17,32 +17,44 @@ def test_text_input_formats():
     print("=== Text Input Format Tests ===")
 
     test_cases = [
-        # (text, expected_amount_contains, expected_merchant_contains)
-        ("Ăn trưa 85k ở Phở Thìn", 85000, "Phở"),
-        ("cà phê 55k tại The Coffee House", 55000, "Coffee House"),
-        ("GrabBike 45k", 45000, "GrabBike"),
-        ("2.5tr internet VNPT", 2500000, "VNPT"),
-        ("Netflix 260k/tháng", 260000, "Netflix"),
-        ("Ăn tối 120,000 VND tại nhà hàng", 120000, "nhà hàng"),
-        ("Mua sắm 1,500,000 VND", 1500000, None),
+        # (text, expected_amount, expected_merchant_substring, expected_category)
+        ("Ăn trưa 85k ở Phở Thìn", 85000, "Phở", "Food"),
+        ("cà phê 55k tại The Coffee House", 55000, "Coffee House", "Coffee"),
+        ("GrabBike 45k", 45000, "GrabBike", "Transport"),
+        ("2.5tr internet VNPT", 2500000, "VNPT", "Utilities"),
+        ("Netflix 260k/tháng", 260000, "Netflix", "Subscription"),
+        ("Ăn tối 120,000 VND tại nhà hàng", 120000, "nhà hàng", "Food"),
+        ("Mua sắm 1,500,000 VND", 1500000, None, "Shopping"),
+        # Test cases for "tốn" and "uống" verbs, generic merchant names
+        ("Uống cà phê quán gần nhà tốn 25k", 25000, None, "Coffee"),
+        ("tốn tiền 500k", 500000, "tiền", "Other"),  # Generic, should be Other
+        ("uống nước 15k", 15000, "nước", "Food"),
     ]
 
     passed = 0
-    for text, expected_amount, expected_merchant in test_cases:
+    for text, expected_amount, expected_merchant, expected_category in test_cases:
         result = extract_simple_fallback(text)
         if result and result.amount == expected_amount:
-            if (
-                expected_merchant is None
-                or expected_merchant.lower() in (result.merchant or "").lower()
-            ):
+            merchant_ok = True
+            if expected_merchant and expected_merchant.lower() not in (result.merchant or "").lower():
+                merchant_ok = False
+            category_ok = True
+            if expected_category and result.category != expected_category:
+                category_ok = False
+            if merchant_ok and category_ok:
                 print(
-                    f"✓ '{text}' -> Amount: {result.amount}, Merchant: {result.merchant}"
+                    f"✓ '{text}' -> Amount: {result.amount}, Merchant: {result.merchant}, Category: {result.category}"
                 )
                 passed += 1
             else:
-                print(
-                    f"✗ '{text}' -> Expected merchant containing '{expected_merchant}', got '{result.merchant}'"
-                )
+                if not merchant_ok:
+                    print(
+                        f"✗ '{text}' -> Expected merchant containing '{expected_merchant}', got '{result.merchant}'"
+                    )
+                if not category_ok:
+                    print(
+                        f"✗ '{text}' -> Expected category '{expected_category}', got '{result.category}'"
+                    )
         else:
             print(
                 f"✗ '{text}' -> Expected {expected_amount}, got {result.amount if result else 'None'}"

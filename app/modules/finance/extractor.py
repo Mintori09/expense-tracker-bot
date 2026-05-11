@@ -1,54 +1,111 @@
 """
 LLM-based transaction extraction module.
+
+Features:
+- Extract single or multiple Vietnamese financial transactions.
+- Supports LLM extraction with robust JSON parsing.
+- Falls back to deterministic regex extraction.
+- Supports VND and USD conversion.
+- Normalizes category, payment method, merchant, date, and amount.
 """
 
 import json
 import logging
 import re
+import time
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
-from app.shared.date_utils import resolve_relative_dates
+from app.shared.date_utils import (
+    VIETNAM_TZ,
+    extract_date_from_text,
+    parse_vietnamese_date,
+    resolve_relative_dates,
+)
 from app.shared.exceptions import ExtractionError
 
 logger = logging.getLogger(__name__)
 
-# Merchant to category mapping for learning
+
+# ---------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------
+
+VALID_CATEGORIES = {
+    "Food",
+    "Coffee",
+    "Groceries",
+    "Transport",
+    "Rent",
+    "Utilities",
+    "Shopping",
+    "Health",
+    "Education",
+    "Entertainment",
+    "Travel",
+    "Subscription",
+    "Income",
+    "Other",
+}
+
+VALID_PAYMENT_METHODS = {
+    "Cash",
+    "Bank Transfer",
+    "Card",
+    "E-wallet",
+    "Unknown",
+}
+
+ACTION_WORDS = [
+    "mua",
+    "uống",
+    "ăn",
+    "trả",
+    "đóng",
+    "thanh toán",
+    "chuyển",
+    "nạp",
+    "đặt",
+    "đi",
+    "dùng",
+    "xài",
+    "tốn",
+    "hết",
+    "mất",
+    "chi",
+    "cho",
+    "tại",
+]
+
+USD_TO_VND_RATE = 25_000
+_usd_rate_cache: dict[str, Any] = {
+    "rate": USD_TO_VND_RATE,
+    "timestamp": None,
+}
+
 _merchant_category_map = settings.merchant_category_map.copy()
 
 
-def get_category_for_merchant(merchant: str) -> Optional[str]:
-    """Get learned category for a merchant."""
-    if merchant:
-        merchant_lower = merchant.lower().strip()
-        for known_merchant, category in _merchant_category_map.items():
-            if (
-                known_merchant.lower() in merchant_lower
-                or merchant_lower in known_merchant.lower()
-            ):
-                return category
-    return None
-
-
-def learn_merchant_category(merchant: str, category: str) -> None:
-    """Learn a new merchant-category mapping."""
-    if merchant and category:
-        _merchant_category_map[merchant] = category
-        logger.info(f"Learned: {merchant} -> {category}")
+# ---------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------
 
 
 class ExtractedTransaction(BaseModel):
-    """Extracted transaction data with validation."""
+    """Normalized extracted transaction data."""
 
-    date: str
+    date: str = Field(
+        default_factory=lambda: datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
+    )
     merchant: Optional[str] = None
-    amount: float = Field(gt=0)
+    amount: float = Field(ge=0)
     currency: str = "VND"
+    original_currency: Optional[str] = None
     category: str = "Other"
-    payment_method: str = "Chuyển khoản"
+    payment_method: str = "Unknown"
     description: str = ""
     source_type: str = "text"
     confidence: float = Field(ge=0, le=1, default=0.9)
@@ -57,541 +114,1061 @@ class ExtractedTransaction(BaseModel):
 
     @field_validator("date")
     @classmethod
-    def validate_date(cls, v):
+    def validate_date(cls, value: str) -> str:
         try:
-            datetime.strptime(v, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError("Invalid date format, expected YYYY-MM-DD")
-        return v
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("Invalid date format, expected YYYY-MM-DD") from exc
+        return value
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, value: str) -> str:
+        # App stores everything as VND.
+        return "VND"
 
     @field_validator("category")
     @classmethod
-    def validate_category(cls, v):
-        valid_categories = [
-            "Food",
+    def validate_category(cls, value: str) -> str:
+        return value if value in VALID_CATEGORIES else "Other"
+
+    @field_validator("payment_method")
+    @classmethod
+    def validate_payment_method(cls, value: str) -> str:
+        mapping = {
+            "cash": "Cash",
+            "tiền mặt": "Cash",
+            "bank transfer": "Bank Transfer",
+            "chuyển khoản": "Bank Transfer",
+            "ck": "Bank Transfer",
+            "banking": "Bank Transfer",
+            "card": "Card",
+            "thẻ": "Card",
+            "visa": "Card",
+            "mastercard": "Card",
+            "e-wallet": "E-wallet",
+            "ewallet": "E-wallet",
+            "ví điện tử": "E-wallet",
+            "momo": "E-wallet",
+            "zalopay": "E-wallet",
+            "shopeepay": "E-wallet",
+            "unknown": "Unknown",
+            "": "Unknown",
+        }
+
+        normalized = str(value or "").strip()
+        return mapping.get(
+            normalized.lower(),
+            normalized if normalized in VALID_PAYMENT_METHODS else "Unknown",
+        )
+
+
+# ---------------------------------------------------------------------
+# Category and merchant helpers
+# ---------------------------------------------------------------------
+
+
+def normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def clean_merchant_text(text: str) -> str:
+    cleaned = normalize_text(text)
+
+    for word in ACTION_WORDS:
+        cleaned = re.sub(rf"\b{re.escape(word)}\b", " ", cleaned, flags=re.IGNORECASE)
+
+    cleaned = re.sub(
+        r"\b(vnd|vnđ|đồng|usd|dollars?|nghìn|ngàn|triệu)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.-:;")
+
+    return cleaned
+
+
+def title_merchant(merchant: Optional[str]) -> Optional[str]:
+    if not merchant:
+        return None
+
+    merchant = normalize_text(merchant)
+    if not merchant:
+        return None
+
+    known_upper = {
+        "fpt",
+        "vnpt",
+        "gpt",
+        "chatgpt",
+        "youtube",
+        "netflix",
+        "spotify",
+        "momo",
+        "zalopay",
+        "shopeepay",
+        "grab",
+        "be",
+        "opencode",
+    }
+
+    if merchant.lower() in known_upper:
+        return merchant.upper() if len(merchant) <= 4 else merchant.title()
+
+    return merchant[:1].upper() + merchant[1:]
+
+
+def get_category_for_keywords(text: str) -> Optional[str]:
+    text_lower = (text or "").lower()
+
+    keyword_rules = [
+        (
             "Coffee",
+            [
+                "cà phê",
+                "cafe",
+                "coffee",
+                "trà sữa",
+                "highlands",
+                "phúc long",
+                "starbucks",
+            ],
+        ),
+        (
+            "Food",
+            ["phở", "bún", "bánh mì", "cơm", "com", "nhà hàng", "quán ăn", "đồ ăn"],
+        ),
+        (
             "Groceries",
+            ["siêu thị", "chợ", "rau", "thịt", "cá", "sữa", "tạp hóa", "groceries"],
+        ),
+        (
             "Transport",
-            "Rent",
+            ["grab", "grabbike", "be", "taxi", "xe ôm", "bus", "xăng", "gửi xe"],
+        ),
+        ("Rent", ["tiền nhà", "thuê nhà", "phòng trọ", "rent"]),
+        (
             "Utilities",
+            [
+                "điện",
+                "nước",
+                "internet",
+                "wifi",
+                "vnpt",
+                "fpt",
+                "viettel",
+                "điện thoại",
+            ],
+        ),
+        (
             "Shopping",
-            "Health",
-            "Education",
-            "Entertainment",
-            "Travel",
+            ["shopee", "lazada", "tiki", "mua đồ", "quần áo", "giày", "shopping"],
+        ),
+        ("Health", ["thuốc", "bệnh viện", "khám", "nha khoa", "nhà thuốc"]),
+        ("Education", ["học phí", "khóa học", "sách", "udemy", "coursera"]),
+        ("Entertainment", ["phim", "game", "karaoke", "vé xem phim"]),
+        ("Travel", ["khách sạn", "vé máy bay", "du lịch", "booking"]),
+        (
             "Subscription",
-            "Income",
-            "Other",
-        ]
-        if v not in valid_categories:
-            return "Other"
-        return v
+            [
+                "netflix",
+                "youtube premium",
+                "spotify",
+                "icloud",
+                "chatgpt",
+                "opencode",
+                "gpt",
+                "gemini",
+                "claude",
+                "cursor",
+                "subscription",
+                "saas",
+                "app",
+                "software",
+            ],
+        ),
+        ("Income", ["lương", "nhận tiền", "được trả", "thu nhập", "thưởng"]),
+    ]
 
+    for category, keywords in keyword_rules:
+        if any(keyword in text_lower for keyword in keywords):
+            return category
 
-def parse_vietnamese_amount(text: str) -> Optional[float]:
-    """Parse Vietnamese amount format like '85k', '2.5tr', '100,000'."""
-    text = text.lower().strip()
-
-    # Match patterns like "85k", "85.5k", "2tr", "2.5tr"
-    k_match = re.search(r"(\d+(?:[.,]\d+)?)\s*k", text)
-    tr_match = re.search(r"(\d+(?:[.,]\d+)?)\s*tr", text)
-
-    if k_match:
-        return float(k_match.group(1).replace(",", ".")) * 1000
-    elif tr_match:
-        return float(tr_match.group(1).replace(",", ".")) * 1000000
-    else:
-        # Try standard number format - handle both 100,000 and 100.000
-        num_match = re.search(r"(\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)", text)
-        if num_match:
-            num_str = num_match.group(1)
-            # Remove dots (thousand separators) and replace comma with dot for decimal
-            if "." in num_str and "," not in num_str:
-                # Format: 100.000 (Vietnamese style with dots as thousand separators)
-                num_str = num_str.replace(".", "")
-            elif "," in num_str and "." not in num_str:
-                # Format: 100,000 (Western style)
-                num_str = num_str.replace(",", "")
-            elif "," in num_str and "." in num_str:
-                # Format: 100,000.00 or 100.000,00 - assume comma is decimal
-                num_str = num_str.replace(".", "").replace(",", ".")
-            return float(num_str)
+    if re.search(r"\b(ăn|uống)\b", text_lower):
+        return "Food"
 
     return None
 
 
-# USD to VND exchange rate (approximate, can be updated dynamically)
-USD_TO_VND_RATE = 25000
-_usd_rate_cache = {"rate": USD_TO_VND_RATE, "timestamp": None}
+def get_category_for_merchant(merchant: Optional[str]) -> Optional[str]:
+    if not merchant:
+        return None
+
+    merchant_lower = merchant.lower().strip()
+
+    for known_merchant, category in _merchant_category_map.items():
+        known_lower = known_merchant.lower().strip()
+
+        # Avoid overly broad matching for very short merchant names.
+        if len(known_lower) < 3:
+            continue
+
+        if known_lower == merchant_lower:
+            return category
+
+        if known_lower in merchant_lower:
+            return category
+
+    return get_category_for_keywords(merchant_lower)
 
 
-def set_usd_to_vnd_rate(rate: float) -> None:
-    """Update the USD to VND rate."""
-    global USD_TO_VND_RATE
-    USD_TO_VND_RATE = rate
-    _usd_rate_cache["rate"] = rate
+def learn_merchant_category(merchant: str, category: str) -> None:
+    """Learn a merchant-category mapping in memory.
 
-
-async def get_usd_to_vnd_rate() -> float:
-    """Fetch current USD to VND exchange rate from external API.
-
-    Uses open.er-api.com (free, reliable) or falls back to cached/fixed rate.
+    Note: This is not persistent. Persist to DB if long-term learning is required.
     """
-    import time
+    if merchant and category in VALID_CATEGORIES:
+        _merchant_category_map[merchant] = category
+        logger.info("Learned merchant category mapping: %s -> %s", merchant, category)
 
-    # Check cache - refresh every hour
-    now = time.time()
-    if _usd_rate_cache["timestamp"] and (now - _usd_rate_cache["timestamp"]) < 3600:
-        return _usd_rate_cache["rate"]
 
-    try:
-        import httpx
+# ---------------------------------------------------------------------
+# Amount parsing
+# ---------------------------------------------------------------------
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            # Try open.er-api.com (free, no API key needed)
-            response = await client.get("https://open.er-api.com/v6/latest/USD")
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("result") == "success" and "rates" in data:
-                    rate = float(data["rates"].get("VND", 0))
-                    if rate > 0:
-                        _usd_rate_cache["rate"] = rate
-                        _usd_rate_cache["timestamp"] = now
-                        logger.info(f"Quy USD rate: {rate}")
-                        return rate
-    except Exception as e:
-        logger.warning(f"Failed to fetch USD rate: {e}")
 
-    return _usd_rate_cache["rate"]
+def parse_vietnamese_amount(text: str) -> Optional[float]:
+    """Parse Vietnamese amount formats.
+
+    Supported:
+    - 85k -> 85000
+    - 2.5tr -> 2500000
+    - 1tr2 -> 1200000
+    - 25 nghìn / 25 ngàn -> 25000
+    - 1 triệu / 1.2 triệu -> 1000000 / 1200000
+    - 100,000 / 100.000 -> 100000
+    """
+    if not text:
+        return None
+
+    text_lower = text.lower().strip()
+
+    # 1tr2, 2tr5
+    mixed_tr_match = re.search(r"\b(\d+)\s*tr\s*(\d+)\b", text_lower)
+    if mixed_tr_match:
+        million = float(mixed_tr_match.group(1))
+        decimal_part = mixed_tr_match.group(2)
+        decimal_value = float(f"0.{decimal_part}")
+        return (million + decimal_value) * 1_000_000
+
+    # 85k, 85.5k
+    k_match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*k\b", text_lower)
+    if k_match:
+        return float(k_match.group(1).replace(",", ".")) * 1_000
+
+    # 2tr, 2.5tr
+    tr_match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*tr\b", text_lower)
+    if tr_match:
+        return float(tr_match.group(1).replace(",", ".")) * 1_000_000
+
+    # 25 nghìn, 25 ngàn
+    thousand_match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(nghìn|ngàn)\b", text_lower)
+    if thousand_match:
+        return float(thousand_match.group(1).replace(",", ".")) * 1_000
+
+    # 1 triệu, 1.2 triệu
+    million_match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*triệu\b", text_lower)
+    if million_match:
+        return float(million_match.group(1).replace(",", ".")) * 1_000_000
+
+    # Standard thousand-separated numbers: 100,000 / 100.000 / 1,000,000
+    separated_match = re.search(r"\b\d{1,3}(?:[.,]\d{3})+\b", text_lower)
+    if separated_match:
+        num_str = separated_match.group(0)
+        return float(num_str.replace(".", "").replace(",", ""))
+
+    # Plain integer only.
+    integer_match = re.search(r"\b\d+\b", text_lower)
+    if integer_match:
+        return float(integer_match.group(0))
+
+    return None
 
 
 def parse_usd_amount(
-    text: str, rate: float = None
+    text: str,
+    rate: Optional[float] = None,
 ) -> tuple[Optional[float], Optional[str]]:
-    """Parse USD amount format like '$10', '10 USD', '10 dollars'.
-
-    Args:
-        text: Text to parse
-        rate: Optional USD to VND rate (uses global if not provided)
+    """Parse USD amount and convert to VND.
 
     Returns:
-        Tuple of (amount_in_vnd, currency_code) or (None, None) if not USD
+        (amount_in_vnd, original_currency)
     """
+    if not text:
+        return None, None
+
     text_lower = text.lower().strip()
 
-    # Match patterns: $10, $10.50, 10$, 10 usd, 10 dollars
     usd_patterns = [
-        r"\$(\d+(?:[.,]\d+)?)",  # $10, $10.50
-        r"(\d+(?:[.,]\d+)?)\s*\$",  # 10$, 10.50$
-        r"(\d+(?:[.,]\d+)?)\s*usd",  # 10 USD
-        r"(\d+(?:[.,]\d+)?)\s*dollars?",  # 10 dollars
+        r"\$(\d+(?:[.,]\d+)?)",
+        r"\b(\d+(?:[.,]\d+)?)\s*\$",
+        r"\b(\d+(?:[.,]\d+)?)\s*usd\b",
+        r"\b(\d+(?:[.,]\d+)?)\s*dollars?\b",
     ]
 
     for pattern in usd_patterns:
         match = re.search(pattern, text_lower)
         if match:
             usd_amount = float(match.group(1).replace(",", "."))
-            vnd_amount = usd_amount * (rate or USD_TO_VND_RATE)
-            return vnd_amount, "USD"
+            return usd_amount * float(rate or USD_TO_VND_RATE), "USD"
 
     return None, None
 
 
-async def call_llm(prompt: str) -> str:
-    """Call LLM API to get response."""
+def remove_amount_from_text(text: str) -> str:
+    patterns = [
+        r"\b\d+\s*tr\s*\d+\b",
+        r"\b\d+(?:[.,]\d+)?\s*k\b",
+        r"\b\d+(?:[.,]\d+)?\s*tr\b",
+        r"\b\d+(?:[.,]\d+)?\s*(nghìn|ngàn|triệu)\b",
+        r"\$\d+(?:[.,]\d+)?",
+        r"\b\d+(?:[.,]\d+)?\s*\$",
+        r"\b\d+(?:[.,]\d+)?\s*usd\b",
+        r"\b\d+(?:[.,]\d+)?\s*dollars?\b",
+        r"\b\d{1,3}(?:[.,]\d{3})+\b",
+    ]
 
+    cleaned = text
+    for pattern in patterns:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+
+    return normalize_text(cleaned)
+
+
+# ---------------------------------------------------------------------
+# Exchange rate
+# ---------------------------------------------------------------------
+
+
+def set_usd_to_vnd_rate(rate: float) -> None:
+    global USD_TO_VND_RATE
+
+    if rate <= 0:
+        raise ValueError("USD to VND rate must be positive")
+
+    USD_TO_VND_RATE = rate
+    _usd_rate_cache["rate"] = rate
+    _usd_rate_cache["timestamp"] = time.time()
+
+
+async def get_usd_to_vnd_rate() -> float:
+    """Fetch current USD to VND exchange rate, with cache and fallback."""
+    now = time.time()
+    cached_timestamp = _usd_rate_cache.get("timestamp")
+
+    if cached_timestamp and now - cached_timestamp < 3600:
+        return float(_usd_rate_cache["rate"])
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get("https://open.er-api.com/v6/latest/USD")
+
+        if response.status_code == 200:
+            data = response.json()
+            rate = float(data.get("rates", {}).get("VND", 0))
+
+            if data.get("result") == "success" and rate > 0:
+                _usd_rate_cache["rate"] = rate
+                _usd_rate_cache["timestamp"] = now
+                logger.info("Updated USD/VND rate: %s", rate)
+                return rate
+
+    except Exception as exc:
+        logger.warning("Failed to fetch USD/VND rate, using fallback: %s", exc)
+
+    return float(_usd_rate_cache["rate"])
+
+
+# ---------------------------------------------------------------------
+# Payment method
+# ---------------------------------------------------------------------
+
+
+def infer_payment_method(text: str) -> str:
+    text_lower = (text or "").lower()
+
+    if any(keyword in text_lower for keyword in ["tiền mặt", "cash"]):
+        return "Cash"
+
+    if any(
+        keyword in text_lower
+        for keyword in ["chuyển khoản", " ck ", "banking", "ngân hàng"]
+    ):
+        return "Bank Transfer"
+
+    if any(
+        keyword in text_lower
+        for keyword in [" thẻ ", "credit card", "debit card", "visa", "mastercard"]
+    ):
+        return "Card"
+
+    if any(
+        keyword in text_lower
+        for keyword in ["momo", "zalopay", "shopeepay", "ví điện tử"]
+    ):
+        return "E-wallet"
+
+    return "Unknown"
+
+
+# ---------------------------------------------------------------------
+# LLM prompt and JSON handling
+# ---------------------------------------------------------------------
+
+
+def get_system_prompt(multiple: bool = False) -> str:
+    if multiple:
+        output_instruction = """
+Extract all financial transactions from the user input.
+
+Return only a valid JSON array.
+Each item in the array must follow this schema:
+"""
+    else:
+        output_instruction = """
+Extract exactly one financial transaction from the user input.
+
+Return only a valid JSON object with this schema:
+"""
+
+    return f"""
+You are a finance data extraction assistant for Vietnamese users.
+
+{output_instruction}
+
+{{
+  "date": "YYYY-MM-DD",
+  "merchant": "string or null",
+  "amount": number,
+  "currency": "VND",
+  "original_currency": "VND | USD | null",
+  "category": "Food | Coffee | Groceries | Transport | Rent | Utilities | Shopping | Health | Education | Entertainment | Travel | Subscription | Income | Other",
+  "payment_method": "Cash | Bank Transfer | Card | E-wallet | Unknown",
+  "description": "short description",
+  "confidence": number between 0 and 1,
+  "needs_review": boolean
+}}
+
+Rules:
+
+1. Date
+- If the date is missing, use today's date.
+- Convert Vietnamese relative dates:
+  - "hôm nay" = today
+  - "hôm qua" = yesterday
+  - "mai" / "ngày mai" = tomorrow
+- Output date as YYYY-MM-DD.
+
+2. Amount and currency
+- The final stored currency must always be "VND".
+- If the input is USD, convert to VND using approximate market rate if available.
+- Set "original_currency" to "USD" if the input was USD, otherwise "VND".
+- Convert "k" to thousand VND:
+  - "25k" = 25000
+  - "85k" = 85000
+- Handle Vietnamese amount formats:
+  - "25 nghìn" = 25000
+  - "25 ngàn" = 25000
+  - "1 triệu" = 1000000
+  - "1tr2" = 1200000
+  - "1.2 triệu" = 1200000
+- If amount is missing or unclear:
+  - amount = 0
+  - needs_review = true
+
+3. Merchant extraction
+- Merchant is the business, app, service, store, brand, product provider, or place related to the transaction.
+- Remove action verbs from merchant:
+  mua, uống, ăn, trả, thanh toán, chuyển, nạp, đặt, đi, dùng, xài, tốn, hết, mất, chi.
+- Keep named brands, apps, services, stores, or places.
+- Do not use action verbs as merchant.
+- Do not invent merchant names.
+- If no merchant/place/brand/service is specified, use null.
+- If only a generic place is mentioned, merchant can be:
+  - "quán cà phê"
+  - "quán ăn"
+  - "siêu thị"
+  - "nhà thuốc"
+  - "cửa hàng"
+
+Examples:
+- "mua Opencode go tốn 5 usd" -> merchant: "Opencode go"
+- "trả Netflix 260k" -> merchant: "Netflix"
+- "uống cà phê Highlands 45k" -> merchant: "Highlands"
+- "ăn phở quán gần nhà 40k" -> merchant: "quán gần nhà"
+- "mua rau 30k" -> merchant: null
+- "đi Grab 70k" -> merchant: "Grab"
+- "nạp MoMo 100k" -> merchant: "MoMo"
+
+4. Category
+Choose the most appropriate category:
+- Coffee: cà phê, cafe, trà sữa, Highlands, Phúc Long, Starbucks
+- Food: ăn, cơm, phở, bún, bánh mì, nhà hàng, đồ ăn
+- Groceries: siêu thị, chợ, rau, thịt, cá, sữa, tạp hóa
+- Transport: Grab, Be, taxi, xe ôm, bus, xăng, gửi xe
+- Rent: tiền nhà, thuê nhà, phòng trọ
+- Utilities: điện, nước, internet, wifi, điện thoại
+- Shopping: mua đồ, quần áo, giày, Shopee, Lazada, Tiki
+- Health: thuốc, bệnh viện, khám, nha khoa, nhà thuốc
+- Education: học phí, khóa học, sách, Udemy, Coursera
+- Entertainment: phim, game, karaoke, vé xem phim
+- Travel: khách sạn, vé máy bay, du lịch, booking
+- Subscription: Netflix, Spotify, YouTube Premium, iCloud, ChatGPT, app subscription, SaaS, phần mềm
+- Income: lương, nhận tiền, được trả, thu nhập, thưởng
+- Other: when no category fits
+
+5. Payment method
+Infer payment method only when clearly stated:
+- Cash: tiền mặt, cash
+- Bank Transfer: chuyển khoản, ck, banking, ngân hàng
+- Card: thẻ, credit card, debit card, visa, mastercard
+- E-wallet: MoMo, ZaloPay, ShopeePay, ví điện tử
+- Unknown: if not specified
+
+6. Description
+- Write a concise Vietnamese or mixed-language description.
+- Do not add unnecessary verbs.
+- Do not include the amount.
+
+7. Confidence and review
+- 0.9-1.0: clear amount, merchant/category/payment, or enough context.
+- 0.7-0.89: mostly clear, but one field inferred.
+- 0.5-0.69: ambiguous merchant/category.
+- Below 0.5: unclear transaction.
+- needs_review = true if:
+  - amount is missing or unclear
+  - multiple transactions appear when extracting one transaction
+  - merchant/category is highly ambiguous
+  - currency conversion is unclear
+
+8. Output
+- Return JSON only.
+- No markdown.
+- No explanation.
+- No extra text.
+"""
+
+
+def extract_json_from_llm_response(response: str) -> Any:
+    """Parse JSON from an LLM response.
+
+    Handles:
+    - Pure JSON
+    - ```json code fences
+    - Extra text around JSON, by extracting first object/array
+    """
+    if not response:
+        raise ExtractionError("Empty LLM response")
+
+    cleaned = re.sub(r"```json\s*|\s*```", "", response, flags=re.IGNORECASE).strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Try to extract JSON array first.
+    array_match = re.search(r"\[[\s\S]*\]", cleaned)
+    if array_match:
+        try:
+            return json.loads(array_match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    # Try to extract JSON object.
+    object_match = re.search(r"\{[\s\S]*\}", cleaned)
+    if object_match:
+        try:
+            return json.loads(object_match.group(0))
+        except json.JSONDecodeError as exc:
+            raise ExtractionError(
+                "Failed to parse JSON object from LLM response"
+            ) from exc
+
+    raise ExtractionError("No valid JSON found in LLM response")
+
+
+async def call_llm(prompt: str, multiple: bool = False) -> str:
+    """Call configured LLM API."""
     from app.config import get_llm_client, settings
 
-    logger.info("=== LLM API call ===")
-    logger.info(f"Provider: {settings.llm_provider}, Model: {settings.llm_model}")
-    logger.info(f"Prompt: {prompt[:100]}...")
+    logger.info(
+        "Calling LLM provider=%s model=%s", settings.llm_provider, settings.llm_model
+    )
 
     client = get_llm_client()
 
     response = await client.chat.completions.create(
         model=settings.llm_model,
         messages=[
-            {"role": "system", "content": get_system_prompt()},
+            {"role": "system", "content": get_system_prompt(multiple=multiple)},
             {"role": "user", "content": prompt},
         ],
         temperature=0.1,
-        max_tokens=500,
+        max_tokens=1200 if multiple else 600,
     )
 
-    result = response.choices[0].message.content
-    logger.info(
-        f"API response ID: {response.id}, tokens: {response.usage.total_tokens}"
-    )
-    logger.info(f"Raw response: {result[:200] if result else 'None'}...")
-    logger.info("=== LLM API completed ===")
+    result = response.choices[0].message.content or ""
+
+    usage = getattr(response, "usage", None)
+    if usage:
+        logger.info("LLM response id=%s tokens=%s", response.id, usage.total_tokens)
 
     return result
 
 
-def get_system_prompt() -> str:
-    """Get the system prompt for LLM extraction."""
-    return """You are a finance data extraction assistant.
-
-Extract one financial transaction from the user input.
-
-Return only valid JSON with this schema:
-
-{
-  "date": "YYYY-MM-DD",
-  "merchant": "string or null",
-  "amount": number,
-  "currency": "VND",
-  "category": "Food | Coffee | Groceries | Transport | Rent | Utilities | Shopping | Health | Education | Entertainment | Travel | Subscription | Income | Other",
-  "payment_method": "Cash | Bank Transfer | Card | E-wallet | Unknown",
-  "description": "short description",
-  "confidence": number between 0 and 1,
-  "needs_review": boolean
-}
-
-Rules:
-- If the date is missing, use today's date.
-- Convert "k" to thousand VND (e.g., "85k" = 85000).
-- If amount is unclear, set needs_review to true.
-- Do not invent merchant names.
-- Return JSON only.
-"""
+# ---------------------------------------------------------------------
+# Normalization
+# ---------------------------------------------------------------------
 
 
-async def extract_transactions(
-    text: str, source_type: str = "text"
-) -> list[ExtractedTransaction]:
-    """Extract multiple transactions from invoice/receipt text using LLM."""
-    logger.info(
-        f"=== Extracting transactions from: '{text[:100]}...' (source: {source_type})"
-    )
+def today_vietnam() -> str:
+    return datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
 
-    # Pre-process text to resolve Vietnamese relative dates
-    text, resolved_date = resolve_relative_dates(text)
-    if resolved_date:
-        logger.info(f"Resolved relative date in text: {resolved_date}")
 
-    system_prompt = """You are a finance data extraction assistant.
-
-Extract ALL items from the invoice/receipt. Each line item is a separate transaction.
-
-Return JSON array with this schema:
-[
-  {
-    "date": "YYYY-MM-DD",
-    "merchant": "string or null",
-    "amount": number,
-    "currency": "VND",
-    "category": "Food | Coffee | Groceries | Transport | Rent | Utilities | Shopping | Health | Education | Entertainment | Travel | Subscription | Income | Other",
-    "payment_method": "Cash | Bank Transfer | Card | E-wallet | Unknown",
-    "description": "item description"
-  }
-]
-
-Rules:
-- If date missing, use today's date
-- Convert "k" to thousand VND (e.g., "85k" = 85000)
-- Use the same merchant for all items
-- If no specific date mentioned, use today
-- Return valid JSON array only"""
+def normalize_date(
+    date_value: Optional[str], resolved_date: Optional[str] = None
+) -> str:
+    if not date_value:
+        return resolved_date or today_vietnam()
 
     try:
-        from app.config import get_llm_client, settings
-
-        client = get_llm_client()
-
-        response = await client.chat.completions.create(
-            model=settings.llm_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text},
-            ],
-            temperature=0.1,
-            max_tokens=1000,
-        )
-
-        result_text = response.choices[0].message.content or "[]"
-        logger.info(f"Multi-transaction API response: {result_text[:200]}")
-
-        # Parse as array
-        data = json.loads(result_text.strip())
-
-        transactions = []
-        from app.shared.date_utils import VIETNAM_TZ
-
-        today = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
-
-        for item in data:
-            try:
-                item_date = item.get("date")
-                # Use resolved date if no date provided
-                if not item_date:
-                    item_date = resolved_date or today
-
-                tx = ExtractedTransaction(
-                    date=item_date,
-                    merchant=item.get("merchant"),
-                    amount=float(item.get("amount", 0)),
-                    currency=item.get("currency", "VND"),
-                    category=item.get("category", "Other"),
-                    payment_method=item.get("payment_method", "Chuyển khoản"),
-                    description=item.get("description", ""),
-                    source_type=source_type,
-                    confidence=0.9,
-                    needs_review=False,
-                )
-                transactions.append(tx)
-            except Exception as e:
-                logger.warning(f"Failed to parse item: {item}, error: {e}")
-
-        logger.info(f"=== Extracted {len(transactions)} transactions ===")
-        return transactions
-
-    except Exception as e:
-        logger.error(f"Multi-transaction extraction failed: {e}")
-        return []  # Return empty list to fall back to single transaction
+        datetime.strptime(date_value, "%Y-%m-%d")
+        return date_value
+    except ValueError:
+        return resolved_date or today_vietnam()
 
 
-async def extract_transaction(
-    text: str, source_type: str = "text"
+def normalize_transaction_payload(
+    item: dict[str, Any],
+    source_type: str = "text",
+    resolved_date: Optional[str] = None,
+    original_text: str = "",
 ) -> ExtractedTransaction:
-    """Extract transaction data from text using LLM."""
-    logger.info(
-        f"=== Extracting transaction from: '{text[:50]}...' (source: {source_type})"
+    merchant = item.get("merchant")
+    merchant = title_merchant(merchant) if merchant else None
+
+    amount = float(item.get("amount") or 0)
+    confidence = float(item.get("confidence", 0.9))
+
+    category = item.get("category") or get_category_for_merchant(merchant)
+    if not category or category not in VALID_CATEGORIES:
+        category = (
+            get_category_for_merchant(merchant)
+            or get_category_for_keywords(original_text)
+            or "Other"
+        )
+
+    payment_method = item.get("payment_method") or infer_payment_method(original_text)
+
+    needs_review = bool(item.get("needs_review", False))
+    if amount <= 0:
+        needs_review = True
+    if confidence < 0.7:
+        needs_review = True
+    if category == "Other" and not merchant:
+        needs_review = True
+
+    # Prevent LLM date hallucination:
+    # - If input text has no explicit/relative date, force today.
+    # - If text has date signal (or resolved_date already found), keep normalized date.
+    text_date = extract_date_from_text(original_text) if original_text else None
+    effective_resolved_date = resolved_date or text_date
+    if effective_resolved_date:
+        normalized_date = effective_resolved_date
+    else:
+        normalized_date = today_vietnam()
+
+    return ExtractedTransaction(
+        date=normalized_date,
+        merchant=merchant,
+        amount=amount,
+        currency="VND",
+        original_currency=item.get("original_currency")
+        or item.get("currency")
+        or "VND",
+        category=category,
+        payment_method=payment_method,
+        description=normalize_text(item.get("description") or ""),
+        source_type=source_type,
+        confidence=confidence,
+        needs_review=needs_review,
+        user_id=item.get("user_id"),
     )
 
-    # Pre-process text to resolve Vietnamese relative dates
-    text, resolved_date = resolve_relative_dates(text)
-    if resolved_date:
-        logger.info(f"Resolved relative date in text: {resolved_date}")
 
-    try:
-        response = await call_llm(text)
-
-        # Strip markdown code blocks if present
-        cleaned_response = re.sub(r"```json\s*|\s*```", "", response).strip()
-        logger.info(f"LLM cleaned response: {cleaned_response[:100]}...")
-
-        # Parse JSON response
-        data = json.loads(cleaned_response)
-
-        # Validate required fields
-        if "amount" not in data:
-            raise ExtractionError("Missing amount in extraction")
-
-        # Parse date - use resolved_date or today if missing or invalid
-        date = data.get("date")
-        from app.shared.date_utils import VIETNAM_TZ
-
-        today = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
-
-        # If we resolved a relative date from the text, use it as the default
-        if not date:
-            date = resolved_date or today
-        else:
-            # Validate date is reasonable (not in the future, not too old)
-            try:
-                parsed_date = datetime.strptime(date, "%Y-%m-%d")
-                today_dt = datetime.now(VIETNAM_TZ)
-                # If date is in future or more than 30 days ago, use resolved or today
-                if (
-                    parsed_date.date() > today_dt.date()
-                    or (today_dt.date() - parsed_date.date()).days > 30
-                ):
-                    date = resolved_date or today
-            except ValueError:
-                date = resolved_date or today
-
-        # Ensure amount is float
-        amount = float(data["amount"])
-        confidence = float(data.get("confidence", 0.9))
-
-        # Determine if needs review
-        needs_review = data.get("needs_review", False)
-        if confidence < 0.7:
-            needs_review = True
-
-        result = ExtractedTransaction(
-            date=date,
-            merchant=data.get("merchant"),
-            amount=amount,
-            currency=data.get("currency", "VND"),
-            category=data.get("category", "Other"),
-            payment_method=data.get("payment_method", "Chuyển khoản"),
-            description=data.get("description", ""),
-            source_type=source_type,
-            confidence=confidence,
-            needs_review=needs_review,
-        )
-
-        logger.info(
-            f"=== Extracted: {result.merchant} - {result.amount} - {result.category} ==="
-        )
-        return result
-
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error: {e}, response was: {response[:100]}")
-        raise ExtractionError("Failed to parse LLM response")
-    except Exception as e:
-        logger.error(f"Extraction error: {e}")
-        raise ExtractionError(str(e))
+# ---------------------------------------------------------------------
+# Fallback extraction
+# ---------------------------------------------------------------------
 
 
-def extract_simple_fallback(
-    text: str, usd_rate: float = None
-) -> Optional[ExtractedTransaction]:
-    """Simple fallback extraction without LLM for common Vietnamese patterns."""
-    from app.shared.date_utils import VIETNAM_TZ, parse_vietnamese_date
+def extract_merchant_from_text(text_without_amount: str) -> Optional[str]:
+    cleaned = clean_merchant_text(text_without_amount)
+    cleaned_lower = cleaned.lower()
 
-    # Clean text
-    text = text.strip()
+    if not cleaned:
+        return None
 
-    # Try to parse Vietnamese relative date from the beginning of the text
-    date = parse_vietnamese_date(text)
-    if date is None:
-        date = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
+    subscription_keywords = [
+        "netflix",
+        "spotify",
+        "youtube",
+        "icloud",
+        "chatgpt",
+        "opencode",
+        "gpt",
+        "gemini",
+        "claude",
+        "cursor",
+    ]
 
-    # Find amount first - check USD first, then VND
-    amount = None
-    merchant_text = text
-    detected_currency = "VND"
+    for keyword in subscription_keywords:
+        if keyword in cleaned_lower:
+            # Try to capture phrase containing the keyword.
+            words = cleaned.split()
+            for i, word in enumerate(words):
+                if keyword in word.lower():
+                    start = max(0, i - 1)
+                    end = min(len(words), i + 3)
+                    return title_merchant(" ".join(words[start:end]))
 
-    # Try to find USD amount
-    usd_amount, usd_currency = parse_usd_amount(text, usd_rate)
-    if usd_amount:
-        amount = usd_amount
-        detected_currency = usd_currency
-        # Remove USD pattern from text
-        for pattern in [
-            r"\$(\d+(?:[.,]\d+)?)",
-            r"(\d+(?:[.,]\d+)?)\s*\$",
-            r"(\d+(?:[.,]\d+)?)\s*usd",
-            r"(\d+(?:[.,]\d+)?)\s*dollars?",
-        ]:
-            merchant_text = re.sub(pattern, "", text, flags=re.IGNORECASE)
-    else:
-        # Try to find amount with k or tr suffix first
-        k_match = re.search(r"(\d+(?:[.,]\d+)?)\s*k", text, re.IGNORECASE)
-        tr_match = re.search(r"(\d+(?:[.,]\d+)?)\s*tr", text, re.IGNORECASE)
+            return title_merchant(keyword)
 
-        if k_match:
-            amount = float(k_match.group(1).replace(",", ".")) * 1000
-            merchant_text = (
-                text[: k_match.start()] + " " + text[k_match.end() :]
-            ).strip()
-        elif tr_match:
-            amount = float(tr_match.group(1).replace(",", ".")) * 1000000
-            merchant_text = (
-                text[: tr_match.start()] + " " + text[tr_match.end() :]
-            ).strip()
-        else:
-            # Try standard number format
-            num_match = re.search(r"(\d{1,3}(?:[.,]\d{3})+|\d+(?:[.,]\d+)?)", text)
-            if num_match:
-                num_str = num_match.group(1)
-                if "." in num_str and "," not in num_str:
-                    num_str = num_str.replace(".", "")
-                elif "," in num_str and "." not in num_str:
-                    num_str = num_str.replace(",", "")
-                amount = float(num_str)
-                merchant_text = (
-                    text[: num_match.start()] + " " + text[num_match.end() :]
-                ).strip()
+    for known_merchant in _merchant_category_map:
+        if known_merchant.lower() in cleaned_lower:
+            return title_merchant(known_merchant)
 
-    if amount and amount > 0:
-        # Clean up merchant name - remove common prefixes (Vietnamese verbs/phrases and date expressions)
-        merchant = re.sub(
-            r"\b(ăn|mua|chi|pay|paid|spent|giao\s?dịch|sáng|trưa|chiều|đêm|tối|cà\s?phê|internet|hôm qua|hôm kia|ngày mai|mống mai|hôm nay|nay|ngày này tháng trước|ngày này tuần trước|ngày này năm trước)\b\s*",
-            "",
-            merchant_text,
-            flags=re.IGNORECASE,
-        )
-        merchant = re.sub(r"\s*(?:vnd|đồng)\b", "", merchant, flags=re.IGNORECASE)
-        merchant = re.sub(r"\s+(?:ở|tại)\s+", " ", merchant, flags=re.IGNORECASE)
-        merchant = re.sub(r"^(?:ở|tại)\s+", "", merchant, flags=re.IGNORECASE)
-        merchant = re.sub(r"\s*/tháng\s*$", "", merchant, flags=re.IGNORECASE)
-        merchant = re.sub(r"\s+", " ", merchant).strip(" -:/")
+    generic_patterns = [
+        r"\bquán\s+(?:cà phê|coffee|ăn|gần nhà|quen)\b",
+        r"\bsiêu thị\b",
+        r"\bnhà thuốc\b",
+        r"\bcửa hàng\b",
+        r"\bshop\b",
+    ]
 
-        if not merchant or merchant.lower() in ["vnd", "đồng"]:
-            merchant = "Unknown"
+    for pattern in generic_patterns:
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+        if match:
+            return normalize_text(match.group(0))
 
-        category = get_category_for_merchant(merchant) or "Other"
-
-        return ExtractedTransaction(
-            date=date,
-            merchant=merchant if merchant else None,
-            amount=amount,
-            currency="VND",
-            category=category,
-            payment_method="Chuyển khoản",
-            description=text[:50],
-            source_type="text",
-            confidence=0.7,
-            needs_review=(category == "Other"),
-        )
+    # Proper-noun style merchant: Highlands, Phuc Long, Circle K, etc.
+    cap_match = re.search(
+        r"\b([A-ZÀ-Ỹ][\wÀ-ỹ]*(?:\s+[A-ZÀ-Ỹ0-9][\wÀ-ỹ]*){0,3})\b",
+        cleaned,
+    )
+    if cap_match:
+        candidate = cap_match.group(1).strip()
+        if candidate.lower() not in {"cash", "card", "bank", "food", "coffee"}:
+            return title_merchant(candidate)
 
     return None
 
 
-def extract_multiple_fallback(text: str) -> list[ExtractedTransaction]:
-    """Extract multiple transactions from text with comma-separated amounts.
+def extract_simple_fallback(
+    text: str,
+    usd_rate: Optional[float] = None,
+    source_type: str = "text",
+) -> Optional[ExtractedTransaction]:
+    """Extract one transaction without LLM."""
+    text = normalize_text(text)
+    if not text:
+        return None
 
-    Example: "30k đánh cầu sân win win, 50k đánh cầu sân lâm gia"
-    Returns: [30k transaction, 50k transaction]
+    date = extract_date_from_text(text) or today_vietnam()
+
+    amount = None
+    original_currency = "VND"
+
+    usd_amount, usd_currency = parse_usd_amount(text, usd_rate)
+    if usd_amount is not None:
+        amount = usd_amount
+        original_currency = usd_currency or "USD"
+    else:
+        amount = parse_vietnamese_amount(text)
+
+    if amount is None:
+        return None
+
+    text_without_amount = remove_amount_from_text(text)
+    merchant = extract_merchant_from_text(text_without_amount)
+
+    description = clean_merchant_text(text_without_amount)
+    if merchant:
+        description = re.sub(re.escape(merchant), " ", description, flags=re.IGNORECASE)
+        description = normalize_text(description)
+
+    category = (
+        get_category_for_merchant(merchant)
+        or get_category_for_keywords(text)
+        or "Other"
+    )
+    payment_method = infer_payment_method(text)
+
+    confidence = 0.75
+    needs_review = False
+
+    if amount <= 0:
+        needs_review = True
+        confidence = 0.4
+
+    if not merchant and category == "Other":
+        needs_review = True
+        confidence = min(confidence, 0.6)
+
+    return ExtractedTransaction(
+        date=date,
+        merchant=merchant,
+        amount=float(amount),
+        currency="VND",
+        original_currency=original_currency,
+        category=category,
+        payment_method=payment_method,
+        description=description,
+        source_type=source_type,
+        confidence=confidence,
+        needs_review=needs_review,
+    )
+
+
+def split_possible_transaction_clauses(text: str) -> list[str]:
+    """Split text into possible transaction clauses.
+
+    Handles:
+    - "30k đánh cầu sân A, 50k đánh cầu sân B"
+    - "đánh cầu sân A 30k, đánh cầu sân B 50k"
     """
-    from app.shared.date_utils import VIETNAM_TZ, parse_vietnamese_date
+    text = normalize_text(text)
 
-    transactions = []
-
-    # Try to parse Vietnamese relative date from the text
-    date = parse_vietnamese_date(text)
-    if date is None:
-        date = datetime.now(VIETNAM_TZ).strftime("%Y-%m-%d")
-
-    # Find all k/tr amounts in the text
-    k_matches = list(re.finditer(r"(\d+(?:[.,]\d+)?)\s*k", text, re.IGNORECASE))
-    tr_matches = list(re.finditer(r"(\d+(?:[.,]\d+)?)\s*tr", text, re.IGNORECASE))
-
-    # Combine and sort by position
-    all_matches = [(m.start(), "k", m) for m in k_matches] + [
-        (m.start(), "tr", m) for m in tr_matches
+    # Split by common separators first.
+    parts = [
+        normalize_text(part)
+        for part in re.split(r"\s*(?:,|;|\n|\r|\svà\s)\s*", text, flags=re.IGNORECASE)
+        if normalize_text(part)
     ]
-    all_matches.sort(key=lambda x: x[0])
 
-    if len(all_matches) <= 1:
-        return transactions  # Not multiple transactions
+    if len(parts) > 1:
+        return parts
 
-    for i, (pos, type_, match) in enumerate(all_matches):
-        if type_ == "k":
-            amount = float(match.group(1).replace(",", ".")) * 1000
-        else:
-            amount = float(match.group(1).replace(",", ".")) * 1000000
+    # If no separators, split before each amount after the first one.
+    amount_pattern = (
+        r"(?:\d+\s*tr\s*\d+|\d+(?:[.,]\d+)?\s*(?:k|tr|nghìn|ngàn|triệu|usd|\$))"
+    )
+    matches = list(re.finditer(amount_pattern, text, flags=re.IGNORECASE))
 
-        # Extract text between this match and the next one (or end of string)
-        start_pos = match.end()
-        if i + 1 < len(all_matches):
-            end_pos = all_matches[i + 1][2].start()
-        else:
-            end_pos = len(text)
+    if len(matches) <= 1:
+        return [text]
 
-        item_text = text[start_pos:end_pos].strip(" ,;-")
+    clauses = []
+    start = 0
 
-        # Clean up the item text
-        item_text = re.sub(r"\s+", " ", item_text).strip()
+    for index, match in enumerate(matches):
+        if index == 0:
+            continue
 
-        if item_text:
-            transactions.append(
-                ExtractedTransaction(
-                    date=date,
-                    merchant=None,
-                    amount=amount,
-                    currency="VND",
-                    category="Other",
-                    payment_method="Chuyển khoản",
-                    description=item_text[:50],
-                    source_type="text",
-                    confidence=0.7,
-                    needs_review=True,
-                )
-            )
+        # Split at previous amount end if structure is "amount description amount description".
+        prev_end = matches[index - 1].end()
+        clause = normalize_text(text[start:prev_end])
+        if clause:
+            clauses.append(clause)
+
+        start = prev_end
+
+    last_clause = normalize_text(text[start:])
+    if last_clause:
+        clauses.append(last_clause)
+
+    return clauses or [text]
+
+
+def extract_multiple_fallback(
+    text: str,
+    usd_rate: Optional[float] = None,
+    source_type: str = "text",
+) -> list[ExtractedTransaction]:
+    clauses = split_possible_transaction_clauses(text)
+
+    transactions: list[ExtractedTransaction] = []
+
+    for clause in clauses:
+        tx = extract_simple_fallback(clause, usd_rate=usd_rate, source_type=source_type)
+        if tx:
+            transactions.append(tx)
+
+    # Only treat as multiple fallback if there are actually multiple transactions.
+    if len(transactions) <= 1:
+        return []
+
+    # Shared date from full input if available.
+    shared_date = parse_vietnamese_date(text)
+    if shared_date:
+        transactions = [
+            tx.model_copy(update={"date": shared_date}) for tx in transactions
+        ]
 
     return transactions
+
+
+# ---------------------------------------------------------------------
+# Public extraction functions
+# ---------------------------------------------------------------------
+
+
+async def extract_transaction(
+    text: str,
+    source_type: str = "text",
+    use_fallback: bool = True,
+) -> ExtractedTransaction:
+    """Extract a single transaction from text."""
+    logger.info("Extracting single transaction from text source=%s", source_type)
+
+    if not text or not text.strip():
+        raise ExtractionError("Input text is empty")
+
+    resolved_text, resolved_date = resolve_relative_dates(text)
+
+    try:
+        response_text = await call_llm(resolved_text, multiple=False)
+        data = extract_json_from_llm_response(response_text)
+
+        if isinstance(data, list):
+            if not data:
+                raise ExtractionError("LLM returned empty transaction list")
+
+            # If LLM returns multiple despite single mode, take first but mark review.
+            first = data[0]
+            first["needs_review"] = True
+            first["confidence"] = min(float(first.get("confidence", 0.7)), 0.7)
+            data = first
+
+        if not isinstance(data, dict):
+            raise ExtractionError("LLM returned invalid transaction payload")
+
+        return normalize_transaction_payload(
+            data,
+            source_type=source_type,
+            resolved_date=resolved_date,
+            original_text=resolved_text,
+        )
+
+    except Exception as exc:
+        logger.warning("LLM single extraction failed: %s", exc)
+
+        if not use_fallback:
+            raise ExtractionError(str(exc)) from exc
+
+        usd_rate = await get_usd_to_vnd_rate()
+        fallback = extract_simple_fallback(
+            resolved_text,
+            usd_rate=usd_rate,
+            source_type=source_type,
+        )
+
+        if fallback:
+            return fallback
+
+        raise ExtractionError(
+            "Failed to extract transaction with both LLM and fallback"
+        ) from exc
+
+
+async def extract_transactions(
+    text: str,
+    source_type: str = "text",
+    use_fallback: bool = True,
+) -> list[ExtractedTransaction]:
+    """Extract one or more transactions from text."""
+    logger.info("Extracting multiple transactions from text source=%s", source_type)
+
+    if not text or not text.strip():
+        return []
+
+    resolved_text, resolved_date = resolve_relative_dates(text)
+
+    try:
+        response_text = await call_llm(resolved_text, multiple=True)
+        data = extract_json_from_llm_response(response_text)
+
+        if isinstance(data, dict):
+            data = [data]
+
+        if not isinstance(data, list):
+            raise ExtractionError("LLM returned invalid transaction list payload")
+
+        transactions = []
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+
+            try:
+                tx = normalize_transaction_payload(
+                    item,
+                    source_type=source_type,
+                    resolved_date=resolved_date,
+                    original_text=resolved_text,
+                )
+                transactions.append(tx)
+            except Exception as item_exc:
+                logger.warning(
+                    "Failed to normalize transaction item=%s error=%s", item, item_exc
+                )
+
+        if transactions:
+            return transactions
+
+        raise ExtractionError("LLM returned no valid transactions")
+
+    except Exception as exc:
+        logger.warning("LLM multiple extraction failed: %s", exc)
+
+        if not use_fallback:
+            return []
+
+        usd_rate = await get_usd_to_vnd_rate()
+
+        multiple = extract_multiple_fallback(
+            resolved_text,
+            usd_rate=usd_rate,
+            source_type=source_type,
+        )
+        if multiple:
+            return multiple
+
+        single = extract_simple_fallback(
+            resolved_text,
+            usd_rate=usd_rate,
+            source_type=source_type,
+        )
+        return [single] if single else []
+
+
+# ---------------------------------------------------------------------
+# Convenience sync-safe helpers for tests
+# ---------------------------------------------------------------------
+
+
+def extract_simple_for_test(
+    text: str, usd_rate: float = USD_TO_VND_RATE
+) -> Optional[ExtractedTransaction]:
+    """Deterministic extraction helper for unit tests."""
+    return extract_simple_fallback(text, usd_rate=usd_rate)
+
+
+def extract_multiple_for_test(
+    text: str, usd_rate: float = USD_TO_VND_RATE
+) -> list[ExtractedTransaction]:
+    """Deterministic multiple extraction helper for unit tests."""
+    return extract_multiple_fallback(text, usd_rate=usd_rate)

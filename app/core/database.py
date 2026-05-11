@@ -240,17 +240,22 @@ def find_duplicates(
     ]
 
 
-def get_transactions(limit: int = 100) -> list[Transaction]:
+def get_transactions(limit: int = 100, user_id: int | None = None) -> list[Transaction]:
     """Get recent transactions."""
-    with get_db_cursor() as cursor:
-        cursor.execute(
-            """
+    query = """
             SELECT * FROM transactions
-            ORDER BY date DESC, created_at DESC
-            LIMIT ?
-        """,
-            (limit,),
-        )
+        """
+    params: list[object] = []
+
+    if user_id is not None:
+        query += " WHERE user_id = ?"
+        params.append(user_id)
+
+    query += " ORDER BY date DESC, created_at DESC LIMIT ?"
+    params.append(limit)
+
+    with get_db_cursor() as cursor:
+        cursor.execute(query, tuple(params))
 
         rows = cursor.fetchall()
 
@@ -330,10 +335,16 @@ def get_learned_category(merchant: str) -> Optional[str]:
     return row[0] if row else None
 
 
-def get_transaction(tx_id: int) -> Optional[Transaction]:
+def get_transaction(tx_id: int, user_id: int | None = None) -> Optional[Transaction]:
     """Get a single transaction by ID."""
     with get_db_cursor() as cursor:
-        cursor.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,))
+        if user_id is None:
+            cursor.execute("SELECT * FROM transactions WHERE id = ?", (tx_id,))
+        else:
+            cursor.execute(
+                "SELECT * FROM transactions WHERE id = ? AND user_id = ?",
+                (tx_id, user_id),
+            )
         row = cursor.fetchone()
 
     if not row:
@@ -390,10 +401,16 @@ def get_today_transactions() -> list[Transaction]:
     ]
 
 
-def delete_transaction(tx_id: int) -> bool:
+def delete_transaction(tx_id: int, user_id: int | None = None) -> bool:
     """Delete a transaction by ID."""
     with get_db_cursor() as cursor:
-        cursor.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+        if user_id is None:
+            cursor.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+        else:
+            cursor.execute(
+                "DELETE FROM transactions WHERE id = ? AND user_id = ?",
+                (tx_id, user_id),
+            )
         return cursor.rowcount > 0
 
 

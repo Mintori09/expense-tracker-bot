@@ -37,6 +37,11 @@ async def process_expense_text(
     if not update.message:
         return
 
+    # Show typing indicator while processing
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action="typing"
+    )
+
     # Get user_id for data isolation
     user_id = update.effective_user.id if update.effective_user else None
 
@@ -173,6 +178,27 @@ async def _confirm_and_store(
 ) -> None:
     """Store transaction directly without confirmation (auto-save mode)."""
     if not update.message:
+        return
+
+    # Skip noisy/unclear extracted payloads to avoid creating garbage records.
+    unclear_description = (tx.description or "").strip().lower()
+    is_unclear = unclear_description in {"unclear transaction", "không rõ", ""}
+    if tx.amount <= 0 or (
+        tx.needs_review
+        and not (tx.merchant or "").strip()
+        and tx.category == "Other"
+        and is_unclear
+    ):
+        if lang == "vi":
+            await update.message.reply_text(
+                "*Bỏ qua giao dịch vì nội dung chưa đủ rõ. Vui lòng nhập lại số tiền và mô tả cụ thể.*",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                "*Skipped because transaction details are too unclear. Please resend with amount and clearer description.*",
+                parse_mode="Markdown",
+            )
         return
 
     duplicates = find_duplicates(tx.merchant or "", tx.amount, tx.date)
